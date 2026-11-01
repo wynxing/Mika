@@ -1,6 +1,6 @@
 # Mika 架构
 
-这份文档按代码现状描述 Mika 的整体结构,方便找代码。还没做的、做了一半的写在 [`roadmap.md`](roadmap.md)。
+这份文档按代码现状描述 Mika 的整体结构,方便找代码。还没做的、做了一半的写在 [`roadmap.md`](roadmap.md)。只想看流程怎么走,看 [`runtime-flow.md`](../runtime-flow.md)。
 
 路径缩写:`core/…` = `core/src/main/kotlin/com/wangzan101/mika/core/`,`app/…` = `app/src/main/java/com/wangzan101/mika/`。
 
