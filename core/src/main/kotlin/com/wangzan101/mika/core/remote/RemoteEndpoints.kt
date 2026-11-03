@@ -14,8 +14,8 @@ import java.net.InetAddress
  * 而不是出现了再拒绝。经网关来的请求默认不给,见 docs/dev/remote-mcp.md。
  */
 class RemoteEndpoints(tasks: RemoteTasks, private val serverVersion: String, private val clock: () -> Long = System::currentTimeMillis,
-    device: DeviceAccess? = null) {
-    private val service = RemoteTaskService(tasks)
+    device: DeviceAccess? = null, records: RunExportSource? = null) {
+    private val service = RemoteTaskService(tasks, records = records)
     private val clients = LinkedHashMap<String, Long>()
     private val mutable = MutableStateFlow(RemoteActivity())
     val activity = mutable.asStateFlow()

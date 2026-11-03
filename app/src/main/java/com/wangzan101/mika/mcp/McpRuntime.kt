@@ -19,6 +19,10 @@ import com.wangzan101.mika.core.mcp.McpUsb
 import com.wangzan101.mika.core.shell.HelperHandoff
 import com.wangzan101.mika.device.AndroidDeviceAccess
 import com.wangzan101.mika.core.remote.RemoteTasks
+import com.wangzan101.mika.core.remote.RunExportSource
+import com.wangzan101.mika.record.RunStore
+import com.wangzan101.mika.task.RemoteRunExport
+import com.wangzan101.mika.task.RemoteTaskHub
 import com.wangzan101.mika.settings.McpSettings
 import com.wangzan101.mika.settings.McpUsbSettings
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,7 +53,8 @@ class McpRuntime(
     val state: StateFlow<McpServerState> = _state.asStateFlow()
     @Volatile private var host: RemoteHost? = null
     private var hostListen = McpModes.Listen.Off
-    private val endpoints = RemoteEndpoints(tasks, BuildConfig.VERSION_NAME, device = device.access)
+    private val exports: RunExportSource? = (tasks as? RemoteTaskHub)?.let { hub -> RemoteRunExport(hub) { RunStore(context) } }
+    private val endpoints = RemoteEndpoints(tasks, BuildConfig.VERSION_NAME, device = device.access, records = exports)
     private val relayAccess = RemoteAccess(token = { if (relaySettings.config.value.enabled) settings.token() else null })
     // 经网关来的请求要另开「允许经网关唤醒和解锁」才看得到屏幕能力;手机上的远程亮屏与解锁许可照样要开。
     private val relay = RelayClient(CoroutineScope(SupervisorJob() + Dispatchers.IO), { req ->

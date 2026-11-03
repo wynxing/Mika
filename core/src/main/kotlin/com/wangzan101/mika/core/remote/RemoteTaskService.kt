@@ -8,11 +8,12 @@ import java.util.UUID
  * 要按入口换说法的几种情形各是一个子类,适配器按类型换,不去比对 message 的文字。
  */
 sealed class RemoteTaskError(val code: Code, message: String) : Exception(message) {
-    enum class Code { INVALID_ARGUMENT, NOT_FOUND, CONFLICT, UNAVAILABLE }
+    enum class Code { INVALID_ARGUMENT, NOT_FOUND, GONE, CONFLICT, UNAVAILABLE }
 
     /** 其余错误:message 原样给调用方。 */
     class General(code: Code, message: String) : RemoteTaskError(code, message)
     class NoSuchTask(val id: String) : RemoteTaskError(Code.NOT_FOUND, "No remote task with id $id")
+    class NoSuchRecord(val id: String) : RemoteTaskError(Code.NOT_FOUND, "No remote task or run record with id $id")
     class BadConversation : RemoteTaskError(Code.INVALID_ARGUMENT,
         "conversation must be one returned by an earlier remote task (looks like mcp-<uuid>)")
     /** 这一步要用户在手机上处理,不能远程回答。 */
@@ -29,14 +30,39 @@ data class RemoteSteerReceipt(val taskId: String, val messageId: String)
  * CLI API 与 MCP 共用的任务用例。没有 HTTP、JSON-RPC、工具名或命令行参数。
  * 只经 [RemoteTasks] 接入手机上原有的任务服务,不创建另一份执行器或任务状态。
  */
-class RemoteTaskService(private val tasks: RemoteTasks, private val pollMs: Long = 250) {
+class RemoteTaskService(
+    private val tasks: RemoteTasks,
+    private val pollMs: Long = 250,
+    private val records: RunExportSource? = null,
+) {
     init { require(pollMs > 0) }
 
-    fun start(goal: String, conversation: String? = null): RemoteTask {
+    val exportEnabled: Boolean get() = records != null
+
+    /**
+     * 按任务编号或运行记录编号导出到目前为止的脱敏记录。没有运行记录出口时不可用。
+     * 未知编号、手机本地运行都是找不到;记录文件已被清掉时说明是哪一次。
+     */
+    fun export(id: String): RunRecordExport.Payload {
+        val source = records ?: throw RemoteTaskError.General(RemoteTaskError.Code.UNAVAILABLE, "Run export is unavailable on this connection.")
+        val clean = id.trim()
+        if (clean.isEmpty() || !ID.matches(clean)) invalid("id must be a task or run id returned by Mika")
+        return when (val found = source.load(clean)) {
+            RunExportLookup.Missing -> throw RemoteTaskError.NoSuchRecord(clean)
+            is RunExportLookup.Gone -> throw RemoteTaskError.General(
+                RemoteTaskError.Code.NOT_FOUND,
+                "Run record ${found.runId} for task ${found.taskId} is no longer on the phone.",
+            )
+            is RunExportLookup.Found -> RunRecordExport.of(found.record)
+        }
+    }
+
+    fun start(goal: String, conversation: String? = null, requestId: String? = null): RemoteTask {
         val clean = required(goal, "goal", MAX_GOAL)
         val thread = conversation?.trim()?.takeIf { it.isNotEmpty() }
         if (thread != null && !isConversation(thread)) throw RemoteTaskError.BadConversation()
-        return when (val r = tasks.start(clean, thread)) {
+        if (requestId != null && !isUuid(requestId)) invalid("request_id must be a canonical lowercase UUID")
+        return when (val r = tasks.start(clean, thread, requestId)) {
             is StartOutcome.Started -> r.task
             is StartOutcome.Refused -> throw RemoteTaskError.General(RemoteTaskError.Code.UNAVAILABLE, r.message)
         }
@@ -124,7 +150,8 @@ class RemoteTaskService(private val tasks: RemoteTasks, private val pollMs: Long
         // 保留已发出的对话编号,让新 CLI 与原 MCP 可以继续同一个远程对话。
         private const val CONVERSATION_PREFIX = "mcp-"
         fun newConversation(): String = CONVERSATION_PREFIX + UUID.randomUUID()
-        fun isConversation(id: String): Boolean = id.startsWith(CONVERSATION_PREFIX) &&
-            id.removePrefix(CONVERSATION_PREFIX).let { raw -> runCatching { UUID.fromString(raw).toString() == raw }.getOrDefault(false) }
+        private fun isUuid(id: String) = runCatching { UUID.fromString(id).toString() == id }.getOrDefault(false)
+        fun isConversation(id: String): Boolean = id.startsWith(CONVERSATION_PREFIX) && isUuid(id.removePrefix(CONVERSATION_PREFIX))
+        private val ID = Regex("[A-Za-z0-9_-]+")
     }
 }

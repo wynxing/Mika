@@ -43,6 +43,14 @@ mika --device SERIAL task wait TASK_ID --timeout 45 --json
 mika --device SERIAL task status TASK_ID --json
 ```
 
+For a recoverable submission, generate and save a lowercase UUID before the call and pass `--request-id UUID`. On a compatible phone this is also the task ID. The CLI generates one automatically when the phone advertises `task_recovery`.
+
+If the task is stuck, failed, or behaved unexpectedly, export the redacted run record before guessing. It is the same event stream as the phone timeline, without screenshot files. `partial: true` means the run is still in progress. An unknown id is an error, not an empty record. Use `task_id`, `conversation_id` and `run_id` in the header to line it up with `task status`.
+
+```bash
+mika --device SERIAL task export TASK_OR_RUN_ID --json
+```
+
 Keep the returned task ID and conversation ID. A successful submission only means that Mika accepted the task.
 
 Wait rule: call `task wait --timeout 45` (allowed 1-50) in the foreground, one call at a time, and re-check the returned state each time. A wait never cancels or resubmits; a timeout is not a failure, so never resubmit on timeout. Stop and report to the user when the task needs an answer or phone takeover, or after a reasonable budget (for example 10-15 waits, longer if progress is clearly advancing). Do not build a background polling loop.
@@ -78,6 +86,6 @@ Use `steer` only when the user adds or corrects requirements for the same `runni
 
 ## Handle uncertain outcomes
 
-- Exit 4: do not automatically repeat the write. Query the known task ID, or inspect `task list` if no ID was received. If this cannot establish the outcome, report that uncertainty.
+- Exit 4: do not automatically repeat the write. A recoverable run returns its preassigned task ID even when the receipt is lost. Query that ID on the same phone. If a retry is needed, reuse the original request ID, goal and conversation. An interrupted run reports `failed` with `failure_kind=interrupted`. Query the known task ID, or inspect `task list` if no ID was received. If this cannot establish the outcome, report that uncertainty.
 - ADB loss or phone reboot: reconnect to the same phone. The remote task index is in memory, so an app restart can make old IDs unavailable; reconnecting does not resume an interrupted task.
 - `doctor` reports model configuration as unverified and does not prove that a real phone task can succeed.

@@ -45,7 +45,21 @@ If you would rather not type commands, connect the phone and run `mika ui`. Your
 
 The sidebar groups the latest 50 remote tasks by conversation. Read each turn in the center and use the composer to continue after a turn ends. Select **View process** to expand the phone’s report and the updates observed in this tab above that turn’s reply. Select **Hide process** to collapse it. The composer keeps your current draft. Select **New chat** to start a separate conversation.
 
+On a phone with task recovery, the desk matches a missing submission receipt by ID when the connection returns. Choose **Find task** if the task is outside the recent list. If the phone has no record yet, choose **Retry with the same ID**. The tab keeps the pending request across a reload until you recover it, retry successfully or dismiss it.
+
 - With several ADB devices, choose one in the page or start with `mika ui --device SERIAL`; Wi-Fi / private VPN connections use the usual `--url` and `--token-file`.
 - With only the Skill installed, run `python3 <skills-directory>/mika/scripts/mika_cli.py ui`.
 - If no browser opens, add `--no-open` and open the printed link in a browser on this computer.
 - The desk listens only on `127.0.0.1` on a random port and prints a new link on every start. The secret in the link is what grants access, so keep it to yourself. Ctrl+C in the terminal closes the desk; tasks already on the phone keep running.
+
+## Export a run record
+
+When a task is stuck, the result looks wrong, or another tool on the computer needs to debug it, pull that turn's redacted record over the same connection. It is the same event stream as the phone's process view, redacted again, and it does not include screenshot files.
+
+```bash
+mika task export TASK_OR_RUN_ID --json
+```
+
+The JSON has `exportFormat` 1 and states `task_id`, `conversation_id` and `run_id` (`conversation_id` is the same value as `conversation` on `task status`). `partial: true` means the turn is still in progress and the events are what has been written so far. An unknown id fails with an explicit error. For one event per line: `mika task export ID --events`.
+
+**View process** on the desk is still the progress observed in that page, not this full event stream. Downloading the same JSON from the desk, or attaching an OTLP Trace or screenshots, is left for later.

@@ -23,8 +23,9 @@ class RemoteTaskApi(
 ) {
     fun handle(req: HttpRequest): HttpResponse = try {
         req.header("accept")?.lowercase()?.let {
-            if ("application/json" !in it && "*/*" !in it && "application/*" !in it)
-                throw ApiError(406, "not_acceptable", "Accept must include application/json")
+            val json = "application/json" in it || "*/*" in it || "application/*" in it
+            val ndjson = EXPORT_PATH.matches(req.path) && "application/x-ndjson" in it
+            if (!json && !ndjson) throw ApiError(406, "not_acceptable", "Accept must include application/json")
         }
         route(req)
     } catch (e: ApiError) {
@@ -33,6 +34,7 @@ class RemoteTaskApi(
         val status = when (e.code) {
             RemoteTaskError.Code.INVALID_ARGUMENT -> 400
             RemoteTaskError.Code.NOT_FOUND -> 404
+            RemoteTaskError.Code.GONE -> 410
             RemoteTaskError.Code.CONFLICT -> 409
             RemoteTaskError.Code.UNAVAILABLE -> 503
         }
@@ -41,12 +43,17 @@ class RemoteTaskApi(
 
     private fun route(req: HttpRequest): HttpResponse {
         val query = query(req)
-        if (req.path != "$ROOT/tasks" && query.isNotEmpty()) invalid("This endpoint accepts no query parameters")
+        if (req.path != "$ROOT/tasks" && !EXPORT_PATH.matches(req.path) && query.isNotEmpty())
+            invalid("This endpoint accepts no query parameters")
         if (req.path == ROOT) {
             method(req, "GET")
             return ok(buildJsonObject {
                 put("api_version", 1); put("server_version", serverVersion)
-                putJsonArray("capabilities") { add("tasks"); add("task_steer"); if (device != null) add("device_state") }
+                putJsonArray("capabilities") {
+                    add("tasks"); add("task_steer"); add("task_recovery")
+                    if (service.exportEnabled) add("run_export")
+                    if (device != null) add("device_state")
+                }
                 putJsonObject("limits") {
                     put("max_wait_s", RemoteTaskService.MAX_WAIT_S)
                     put("max_goal", RemoteTaskService.MAX_GOAL)
@@ -72,8 +79,10 @@ class RemoteTaskApi(
                 }
                 "POST" -> {
                     if (query.isNotEmpty()) invalid("Task submission accepts no query parameters")
-                    val body = body(req, setOf("goal", "conversation"))
-                    ok(RemoteStatus.describe(service.start(string(body, "goal").orEmpty(), string(body, "conversation"))), 201)
+                    val body = body(req, setOf("goal", "conversation", "request_id"))
+                    val requestId = if ("request_id" in body) string(body, "request_id").orEmpty() else null
+                    val task = service.start(string(body, "goal").orEmpty(), string(body, "conversation"), requestId)
+                    ok(RemoteStatus.describe(task), 201)
                 }
                 else -> wrongMethod("GET, POST")
             }
@@ -117,8 +126,24 @@ class RemoteTaskApi(
                     r.status?.let { put("status", it) }
                 }, if (r.accepted) 202 else 200)
             }
+            "export" -> export(req, id, query)
             else -> throw ApiError(404, "not_found", "No such endpoint")
         }
+    }
+
+    /** 任务编号或运行记录编号都行。默认一个 JSON;`events=jsonl` 时第一行是头,之后一行一个事件。 */
+    private fun export(req: HttpRequest, id: String, query: Map<String, String>): HttpResponse {
+        if (!service.exportEnabled) throw ApiError(404, "not_found", "No such endpoint")
+        method(req, "GET")
+        if (query.keys.any { it != "events" }) invalid("Only events is supported")
+        val jsonl = when (val mode = query["events"]) {
+            null -> false
+            "jsonl" -> true
+            else -> invalid("events must be jsonl")
+        }
+        val payload = service.export(id)
+        return if (!jsonl) ok(payload.json)
+        else HttpResponse.json(200, payload.jsonl, mapOf("Content-Type" to "application/x-ndjson; charset=utf-8"))
     }
 
     private fun body(req: HttpRequest, allowed: Set<String>): JsonObject {
@@ -163,6 +188,7 @@ class RemoteTaskApi(
     companion object {
         const val ROOT = "/api/v1"
         private val ID = Regex("[A-Za-z0-9_-]+")
+        private val EXPORT_PATH = Regex("$ROOT/tasks/$ID/export")
         fun error(status: Int, code: String, message: String, headers: Map<String, String> = emptyMap()) =
             HttpResponse.json(status, buildJsonObject { putJsonObject("error") {
                 put("code", code); put("message", message)

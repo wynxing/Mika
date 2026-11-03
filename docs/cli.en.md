@@ -64,6 +64,7 @@ mika --device SERIAL task answer TASK_ID --text-file answer.txt --json
 mika --device SERIAL task steer TASK_ID --text "Only summarize today's messages" --json
 mika --device SERIAL task cancel TASK_ID --json
 mika --device SERIAL task list --limit 10 --json
+mika --device SERIAL task export TASK_OR_RUN_ID --json
 ```
 
 Use `--goal` / `--text` for simple text, or UTF-8 files for multiline input. A file argument of `-` reads stdin. `run --conversation CONVERSATION_ID` starts another task in an existing remote conversation; `answer` only answers an open question. Existing mcp- conversation IDs remain valid across both interfaces. Their historical prefix does not mean the CLI uses MCP.
@@ -73,6 +74,8 @@ Use `--goal` / `--text` for simple text, or UTF-8 files for multiline input. A f
 `steer` adds instructions to a `running` remote task without changing its task ID or context. It also accepts `--text-file` (a file or `-` for stdin), up to 4000 characters. `accepted: true` and `message_id` acknowledge inbox delivery only. Query `status` and find the message in `steers`: `received` means queued, `joined` means added to this task's context, and `not_applied` means unused when the task ended or was cancelled. `joined` does not prove successful execution. An action already executing finishes first; steering does not undo past actions.
 
 Queued, paused, question-waiting, phone-handoff and terminal tasks reject steering (409). Use `answer` for questions and the phone for handoff/approvals. Even a race with task completion never starts another task. Do not repeat a write whose response was lost: query the same task, and report uncertainty if no message ID was received and delivery cannot be established. Steering requires the APK's `task_steer` capability; older APKs prompt an update instead of falling back to a new task.
+
+`export` pulls the redacted on-disk record for a task id or run id (the same `run.json` and `events.jsonl` as the phone's process view, redacted again). The default is one JSON object with `exportFormat` 1. The header maps `task_id`, `conversation_id` and `run_id`, and `events` is an array. `partial: true` means the run is still in progress and the events are what has been written so far. `--events` prints the header as the first line and then one event per line. Screenshot files are omitted; `media` events keep only the id and step. An unknown id fails with an explicit error. Runs started on the phone itself are not exported. Older APKs without the `run_export` capability ask you to update.
 
 `--json` writes one JSON object to stdout for both success and errors. The default is indented JSON, with errors on stderr. Connection options and `--json` work before or after subcommands. `--request-timeout` controls HTTP timeouts; a wait request has at least its wait budget plus five seconds to receive a response.
 
@@ -84,7 +87,9 @@ Queued, paused, question-waiting, phone-handoff and terminal tasks reject steeri
 | 4 | Write outcome unknown; the phone may have accepted it, and it was not retried. |
 | 130 | A local read/wait was interrupted; no phone task cancellation was requested. |
 
-A lost write response, server-side write error or Ctrl-C during a write can leave its outcome unknown. Query the known task ID, or inspect recent tasks when no ID was received. Report uncertainty if it cannot be resolved. Reads also have no automatic retries. The phone's remote task index remains in memory, so an app process restart can make old IDs unavailable. This PR does not add task persistence or idempotent submission guarantees.
+On a phone advertising `task_recovery`, the CLI generates a lowercase UUID before submitting and the phone records it before starting the task. For automation, save your own UUID first and pass it to `task run --request-id UUID --goal ...`. A lost receipt returns exit 4 with the `task_id`. Reconnect to the same phone and run `mika task status UUID`. If the phone still returns 404 and you intend to retry, use the same ID, goal and conversation argument. A replay returns the existing task. Reusing the ID for a different request returns 409. The CLI never automatically resends a write.
+
+After an app process restart the same ID retrieves the answer and verification fields, failure reason or cancellation. An unfinished task returns `failed` with `failure_kind=interrupted`. Deleting a conversation clears its remote task contents. Its used IDs return 410 and cannot start tasks again. Finished task records are kept for 30 days, up to the latest 1000; after that the same ID counts as a new request. IDs held only in memory before upgrading cannot be reconstructed. Ordinary submissions still work on older phones with the previous recent-task lookup. An explicit `--request-id` requires a compatible phone.
 
 `doctor` checks connectivity/API and available device state; it explicitly reports model configuration as unverified. It neither invokes a model nor starts a task, and cannot establish real-device task acceptance. Missing `verified` means unknown. Payment confirmations, phone handoff and access to phone-local tasks retain the same boundaries as MCP.
 
@@ -105,13 +110,14 @@ All paths below are relative to `/api/v1` and use the same Bearer authentication
 | --- | --- |
 | GET root | API version, server version, capabilities and input limits. |
 | GET /device | Read-only device state; 503 if unavailable. |
-| POST /tasks | goal and optional conversation; 201 with task ID and state. |
+| POST /tasks | A goal, optional conversation and optional request_id. With a request ID, the returned task_id equals that ID. |
 | GET /tasks?limit=10 | Recent remote tasks; limit 1–50. |
 | GET /tasks/ID | Current task state. |
 | POST /tasks/ID/wait | timeout_s 1–50, default 30; state and changed. |
 | POST /tasks/ID/answer | text; returns task_id and accepted. |
 | POST /tasks/ID/steer | text; 202 with task_id, message_id and accepted. Only accepts running tasks. |
 | POST /tasks/ID/cancel | Empty object; 202 when accepted, 200 for an already-terminal task; returns accepted. |
+| GET /tasks/ID/export | Task id or run id. Redacted record (`exportFormat: 1`, header plus an `events` array); `?events=jsonl` is NDJSON. No screenshot files. Unknown id is 404. |
 
 Business validation errors return 400, missing tasks 404, answers incompatible with the current state 409, and refused starts 503. Authentication, origin and rate-limit policies are shared with `/mcp`. Both adapters use the same remote task index. Clients with the same access authorization can operate on remote tasks across interfaces; phone-local tasks remain inaccessible.
 
