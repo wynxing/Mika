@@ -34,4 +34,6 @@
     <string name="teach_sensitive_note">Masukan sensitif tidak disimpan.</string>
     <string name="teach_insufficient_note">Informasi antarmuka tidak cukup. Ini bukan tindakan berbasis koordinat.</string>
     <string name="teach_notification">Mika tidak mengoperasikan ponsel.</string>
+    <string name="teach_no_visible">Bilah Sedang belajar tidak bisa ditampilkan, jadi perekaman tidak dimulai. Izin notifikasi tidak diperlukan. Lapisan aksesibilitas harus terlihat, dengan Jeda dan Akhiri.</string>
+    <string name="teach_watch_lost">Bilah Sedang belajar hilang, jadi demonstrasi dihentikan. Tidak ada yang direkam lagi.</string>
 </resources>

@@ -58,7 +58,7 @@ class TeachFilesTest {
         assertTrue(hidden.items.none { it.name == skill.name })
 
         skills.reject("draftc")
-        if (files.load()?.id == TeachSkill.sessionId(skill.learnedFrom)) files.delete()
+        if (TeachSkill.retiresTrace(skill, id)) files.delete()
         assertNull(files.load())
         assertTrue(skills.pending().isEmpty())
 
@@ -71,7 +71,16 @@ class TeachFilesTest {
         assertTrue(shown.content.contains("not trial-run"))
         assertTrue(shown.content.contains(TeachSkill.NOT_TRIAL_RUN))
         assertFalse(shown.content.contains("trial-run succeeded"))
-        if (files.load()?.id == TeachSkill.sessionId(accepted?.learnedFrom)) files.delete()
+        if (accepted != null && TeachSkill.retiresTrace(accepted, id)) files.delete()
+        assertNull(files.load())
+        files.save(session)
+        val other = accepted!!.copy(
+            source = "user", learnedFrom = "run-1",
+            markdown = accepted.markdown.replace("source: demonstrated", "source: user"),
+        )
+        if (TeachSkill.retiresTrace(other, id)) files.delete()
+        assertEquals(id, files.load()?.id)
+        if (TeachSkill.retiresTrace(accepted, id)) files.delete()
         assertNull(files.load())
     }
 

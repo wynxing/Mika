@@ -276,7 +276,24 @@ object TeachSkill {
         return FrontMatter.parse(skill.markdown).first["source"] == SOURCE
     }
 
+    /** 只有来源是示范、并且轨迹编号对得上，审核结束才删那份轨迹。别的技能不动它。 */
+    fun retiresTrace(skill: PersonalSkill, traceId: String): Boolean =
+        isDemonstrated(skill) && sessionId(skill.learnedFrom) == traceId
+
     val ID = Regex("[a-f0-9]{32}")
+}
+
+/**
+ * 采集或暂停时必须有一个不靠通知权限的可见控件，上面能暂停或结束。
+ * 控件加不上就不能开始；控件中途消失就停止采集。
+ */
+object TeachWatch {
+    fun allowsCollecting(controlVisible: Boolean): Boolean = controlVisible
+
+    fun afterControlLost(phase: TeachPhase): TeachPhase = when (phase) {
+        TeachPhase.Recording, TeachPhase.Paused -> TeachPhase.Interrupted
+        else -> phase
+    }
 }
 
 /** 发给模型的脱敏摘要，或本机直接整理出的草稿。 */

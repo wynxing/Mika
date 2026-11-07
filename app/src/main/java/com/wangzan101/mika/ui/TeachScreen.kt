@@ -65,6 +65,8 @@ private fun Notice(notice: TeachNotice?) {
         TeachNotice.DraftFailed -> stringResource(R.string.teach_draft_failed)
         TeachNotice.NoSteps -> stringResource(R.string.teach_no_steps)
         TeachNotice.SecretNote -> stringResource(R.string.teach_sensitive_note)
+        TeachNotice.NoVisibleStop -> stringResource(R.string.teach_no_visible)
+        TeachNotice.WatchLost -> stringResource(R.string.teach_watch_lost)
         null -> return
     }
     Text(text, Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MikaTheme.colors.warn, style = MikaType.Body)

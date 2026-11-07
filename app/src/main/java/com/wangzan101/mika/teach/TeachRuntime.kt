@@ -16,6 +16,7 @@ import com.wangzan101.mika.core.teach.TeachPublish
 import com.wangzan101.mika.core.teach.TeachSession
 import com.wangzan101.mika.core.teach.TeachSkill
 import com.wangzan101.mika.core.teach.TeachTrace
+import com.wangzan101.mika.core.teach.TeachWatch
 import com.wangzan101.mika.core.teach.teachGoalAccepted
 import com.wangzan101.mika.core.tool.Verb
 import com.wangzan101.mika.settings.ProviderStore
@@ -30,7 +31,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
-enum class TeachNotice { Busy, NoAccessibility, NeedGoal, SecretGoal, DraftFailed, NoSteps, SecretNote }
+enum class TeachNotice { Busy, NoAccessibility, NeedGoal, SecretGoal, DraftFailed, NoSteps, SecretNote, NoVisibleStop, WatchLost }
 
 data class TeachUi(
     val session: TeachSession? = null,
@@ -48,6 +49,7 @@ class TeachRuntime(
     private val tasks: TaskCenterState,
 ) {
     private val files = TeachFiles(app.filesDir)
+    private val chip = TeachChip(onPause = { pause() }, onResume = { resume() }, onEnd = { end(); openReview() })
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val lock = Any()
     private var session: TeachSession? = null
@@ -107,16 +109,22 @@ class TeachRuntime(
         synchronized(lock) {
             val current = session
             if (current != null && current.phase != TeachPhase.Saved && current.phase != TeachPhase.Idle) return null
+        }
+        if (!chip.show(TeachPhase.Recording)) return TeachNotice.NoVisibleStop
+        synchronized(lock) {
             session = TeachSession(newId(), clean, TeachPhase.Recording, updatedAt = System.currentTimeMillis())
             files.save(session!!)
             publish(null)
         }
-        TeachNotifier.show(app, TeachPhase.Recording)
+        TeachNotifier.tryShow(app, TeachPhase.Recording)
         (app.applicationContext as? MikaApp)?.capsule?.yieldToTeaching()
         return null
     }
 
-    fun pause() = setPhase(TeachPhase.Paused, TeachPhase.Recording)
+    fun pause() {
+        setPhase(TeachPhase.Paused, TeachPhase.Recording)
+        if (synchronized(lock) { session?.phase } == TeachPhase.Paused && !chip.show(TeachPhase.Paused)) loseWatch()
+    }
 
     fun resume(): TeachNotice? {
         if (busy()) return fail(TeachNotice.Busy)
@@ -124,15 +132,24 @@ class TeachRuntime(
         synchronized(lock) {
             val cur = session ?: return TeachNotice.NeedGoal
             if (cur.phase != TeachPhase.Paused && cur.phase != TeachPhase.Interrupted) return null
+        }
+        if (!TeachWatch.allowsCollecting(chip.show(TeachPhase.Recording))) return fail(TeachNotice.NoVisibleStop)
+        synchronized(lock) {
+            val cur = session
+            if (cur == null || (cur.phase != TeachPhase.Paused && cur.phase != TeachPhase.Interrupted)) {
+                chip.hide()
+                return if (cur == null) TeachNotice.NeedGoal else null
+            }
             session = cur.copy(phase = TeachPhase.Recording, updatedAt = System.currentTimeMillis())
             files.save(session!!)
             publish(null)
         }
-        TeachNotifier.show(app, TeachPhase.Recording)
+        TeachNotifier.tryShow(app, TeachPhase.Recording)
         return null
     }
 
     fun end() {
+        chip.hide()
         synchronized(lock) {
             val cur = session ?: return
             if (cur.phase != TeachPhase.Recording && cur.phase != TeachPhase.Paused && cur.phase != TeachPhase.Interrupted) return
@@ -144,6 +161,7 @@ class TeachRuntime(
     }
 
     fun discard() {
+        chip.hide()
         val draft = synchronized(lock) {
             val id = session?.draftId
             session = null
@@ -213,13 +231,15 @@ class TeachRuntime(
 
     /** 草稿被拒绝、删除或收下：轨迹不再需要。 */
     fun forget(skill: PersonalSkill) {
-        val id = TeachSkill.sessionId(skill.learnedFrom) ?: return
+        val traceId = synchronized(lock) { session?.id ?: files.load()?.id } ?: return
+        if (!TeachSkill.retiresTrace(skill, traceId)) return
+        chip.hide()
         synchronized(lock) {
-            if (session?.id == id) {
+            if (session?.id == traceId) {
                 session = null
                 publish(null)
             }
-            if (files.load()?.id == id) files.delete()
+            if (files.load()?.id == traceId) files.delete()
         }
     }
 
@@ -237,15 +257,27 @@ class TeachRuntime(
         )
     }
 
-    private fun interrupt() {
-        synchronized(lock) {
-            val cur = session ?: return
-            if (cur.phase != TeachPhase.Recording && cur.phase != TeachPhase.Paused) return
-            session = cur.copy(phase = TeachPhase.Interrupted, updatedAt = System.currentTimeMillis())
+    private fun interrupt() = loseWatch()
+
+    /** 浮层或无障碍没了：停止采集，并留下原因。不再记录。 */
+    private fun loseWatch() {
+        chip.hide()
+        val stopped = synchronized(lock) {
+            val cur = session ?: return@synchronized false
+            val next = TeachWatch.afterControlLost(cur.phase)
+            if (next == cur.phase) return@synchronized false
+            session = cur.copy(phase = next, updatedAt = System.currentTimeMillis())
             files.save(session!!)
-            publish(null)
+            true
         }
         TeachNotifier.cancel(app)
+        if (stopped) publish(TeachNotice.WatchLost)
+    }
+
+    private fun openReview() {
+        val intent = com.wangzan101.mika.task.TaskService.openAppIntent(app)
+            .putExtra(com.wangzan101.mika.ui.MainActivity.EXTRA_OPEN_TEACH, true)
+        runCatching { app.startActivity(intent) }
     }
 
     private fun setPhase(next: TeachPhase, from: TeachPhase) {
@@ -256,7 +288,7 @@ class TeachRuntime(
             files.save(session!!)
             publish(null)
         }
-        TeachNotifier.show(app, next)
+        TeachNotifier.tryShow(app, next)
     }
 
     private fun edit(block: (TeachSession) -> TeachSession) {

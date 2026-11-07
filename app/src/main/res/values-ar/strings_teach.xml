@@ -34,4 +34,6 @@
     <string name="teach_sensitive_note">لم يُحفظ الإدخال الحساس.</string>
     <string name="teach_insufficient_note">معلومات الواجهة غير كافية. هذا ليس إجراء بالإحداثيات.</string>
     <string name="teach_notification">Mika لا تشغّل الهاتف.</string>
+    <string name="teach_no_visible">تعذر إظهار شريط التعلم، لذلك لم يبدأ التسجيل. إذن الإشعارات غير مطلوب. يجب أن تظهر طبقة إمكانية الوصول وفيها إيقاف مؤقت وإنهاء.</string>
+    <string name="teach_watch_lost">اختفى شريط التعلم، لذلك توقف العرض. لم يعد يُسجل شيء.</string>
 </resources>

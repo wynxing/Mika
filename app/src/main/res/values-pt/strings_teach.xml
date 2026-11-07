@@ -34,4 +34,6 @@
     <string name="teach_sensitive_note">A entrada sensível não foi salva.</string>
     <string name="teach_insufficient_note">Não há informação suficiente da interface. Isto não é uma ação por coordenadas.</string>
     <string name="teach_notification">A Mika não está operando o telefone.</string>
+    <string name="teach_no_visible">A barra Aprendendo não pôde ser mostrada, então a gravação não começou. Permissão de notificação não é necessária. A sobreposição de acessibilidade precisa ficar visível, com Pausar e Terminar.</string>
+    <string name="teach_watch_lost">A barra Aprendendo sumiu, então a demonstração parou. Nada mais está sendo gravado.</string>
 </resources>

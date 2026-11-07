@@ -34,4 +34,6 @@
     <string name="teach_sensitive_note">민감한 입력은 저장하지 않았습니다.</string>
     <string name="teach_insufficient_note">화면 정보가 부족합니다. 좌표 동작이 아닙니다.</string>
     <string name="teach_notification">Mika가 기기를 조작하고 있지 않습니다.</string>
+    <string name="teach_no_visible">학습 중 막대를 띄울 수 없어 기록을 시작하지 않았습니다. 알림 권한은 필요 없습니다. 접근성 오버레이가 보여야 하고, 거기에서 일시 중지하거나 끝낼 수 있어야 합니다.</string>
+    <string name="teach_watch_lost">학습 중 막대가 사라져 시범을 멈췄습니다. 더 이상 기록하지 않습니다.</string>
 </resources>

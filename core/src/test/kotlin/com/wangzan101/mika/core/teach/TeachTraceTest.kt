@@ -56,8 +56,33 @@ class TeachTraceTest {
     @Test fun ignoresOwnUiAndOtherDisplays() {
         val s = session()
         assertSame(s, TeachTrace.reduce(s, obs(TeachEventKind.Click, pkg = own, description = "正在学习"), own))
+        assertSame(s, TeachTrace.reduce(s, obs(TeachEventKind.Click, pkg = own, description = "暂停"), own))
         assertSame(s, TeachTrace.reduce(s, obs(TeachEventKind.Click, description = "筛选", displayId = 5), own))
         assertSame(s, TeachTrace.reduce(s, obs(TeachEventKind.Click, pkg = "  "), own))
+    }
+
+    @Test fun recordingRequiresAVisibleStopControl() {
+        assertFalse(TeachWatch.allowsCollecting(false))
+        assertTrue(TeachWatch.allowsCollecting(true))
+        val recording = session(TeachPhase.Recording)
+        val stopped = recording.copy(phase = TeachWatch.afterControlLost(recording.phase))
+        assertEquals(TeachPhase.Interrupted, stopped.phase)
+        assertFalse(stopped.phase.collects())
+        assertSame(stopped, TeachTrace.reduce(stopped, obs(TeachEventKind.Click, description = "筛选"), own))
+        assertEquals(TeachPhase.Interrupted, TeachWatch.afterControlLost(TeachPhase.Paused))
+        assertEquals(TeachPhase.Reviewing, TeachWatch.afterControlLost(TeachPhase.Reviewing))
+    }
+
+    @Test fun onlyDemonstratedSkillsRetireTheirTrace() {
+        val demo = com.wangzan101.mika.core.skills.PersonalSkill(
+            "demo-aaaaaaaa", "---\nsource: demonstrated\n---\n正文", com.wangzan101.mika.core.skills.SkillStatus.pending,
+            "teach:$id", null, 0L, emptyList(), source = TeachSkill.SOURCE,
+        )
+        val learned = demo.copy(source = null, learnedFrom = "run-1", markdown = "---\nsource: learned\n---\n正文")
+        assertTrue(TeachSkill.retiresTrace(demo, id))
+        assertFalse(TeachSkill.retiresTrace(learned, id))
+        assertFalse(TeachSkill.retiresTrace(demo.copy(learnedFrom = "teach:short"), id))
+        assertFalse(TeachSkill.retiresTrace(demo.copy(source = "user", markdown = "---\nsource: user\n---\n正文"), id))
     }
 
     @Test fun mergesRedundantEventsAndKeepsWindowPackage() {

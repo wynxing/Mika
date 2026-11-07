@@ -34,4 +34,6 @@
     <string name="teach_sensitive_note">Sensitive input was left out.</string>
     <string name="teach_insufficient_note">Not enough interface information. This is not a coordinate action.</string>
     <string name="teach_notification">Mika is not operating the phone.</string>
+    <string name="teach_no_visible">The Learning bar could not be shown, so recording did not start. Notification permission is not required. The accessibility overlay has to be visible, with Pause and Finish on it.</string>
+    <string name="teach_watch_lost">The Learning bar disappeared, so the demonstration stopped. Nothing more is being recorded.</string>
 </resources>

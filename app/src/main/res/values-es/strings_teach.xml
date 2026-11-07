@@ -34,4 +34,6 @@
     <string name="teach_sensitive_note">La entrada sensible no se guardó.</string>
     <string name="teach_insufficient_note">No hay bastante información de la interfaz. No es una acción por coordenadas.</string>
     <string name="teach_notification">Mika no está usando el teléfono.</string>
+    <string name="teach_no_visible">No se pudo mostrar la barra Aprendiendo, así que la grabación no empezó. No hace falta permiso de notificaciones. La superposición de accesibilidad tiene que verse, con Pausar y Terminar.</string>
+    <string name="teach_watch_lost">La barra Aprendiendo desapareció, así que la demostración se detuvo. Ya no se graba nada.</string>
 </resources>

@@ -34,4 +34,6 @@
     <string name="teach_sensitive_note">敏感輸入沒有保存。</string>
     <string name="teach_insufficient_note">介面資訊不足，這不是座標操作。</string>
     <string name="teach_notification">Mika 沒有在操作手機。</string>
+    <string name="teach_no_visible">螢幕上加不上「正在學習」，所以沒有開始記錄。不需要通知權限，但無障礙浮層必須能顯示，並且能暫停或結束。</string>
+    <string name="teach_watch_lost">「正在學習」的浮層不見了，示範已停下，不再記錄。</string>
 </resources>

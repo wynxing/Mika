@@ -20,6 +20,11 @@ object TeachNotifier {
     private const val CHANNEL = "teach"
     private const val ID = 7
 
+    /** 通知只是附加提示。失败（例如没有通知权限）不影响采集；采集靠 [TeachChip]。 */
+    fun tryShow(context: Context, phase: TeachPhase) {
+        runCatching { show(context, phase) }
+    }
+
     fun show(context: Context, phase: TeachPhase) {
         if (phase != TeachPhase.Recording && phase != TeachPhase.Paused) {
             cancel(context)

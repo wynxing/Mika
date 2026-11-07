@@ -34,4 +34,6 @@
     <string name="teach_sensitive_note">Секретный ввод не сохранен.</string>
     <string name="teach_insufficient_note">Недостаточно данных об интерфейсе. Это не действие по координатам.</string>
     <string name="teach_notification">Mika не управляет телефоном.</string>
+    <string name="teach_no_visible">Полосу «Учится» не удалось показать, поэтому запись не началась. Разрешение на уведомления не нужно. Нужна видимая панель спецвозможностей с паузой и завершением.</string>
+    <string name="teach_watch_lost">Полоса «Учится» исчезла, поэтому показ остановлен. Больше ничего не записывается.</string>
 </resources>
