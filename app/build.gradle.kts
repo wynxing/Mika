@@ -34,12 +34,16 @@ android {
     // 两个包代码、资源、版本号、签名都一样,只差 lib/ 下的其他架构;各自是完整 APK,不是一起安装的拆分包。
     // 产物:app-universal-<类型>.apk、app-arm64-v8a-<类型>.apk。拆分对所有构建类型生效,
     // 所以只在这次构建要出 perf/release 包时打开,单独构建调试包时产物仍是 app-debug.apk。
+    // -Parm64Only 再出一份只含 arm64-v8a 的完整安装包,不带全架构包。常和 -PdevInstall 一起用:
+    // ./gradlew :app:assembleDebug -PdevInstall -Parm64Only
+    val arm64Only = providers.gradleProperty("arm64Only").isPresent
+    val releaseLike = gradle.startParameter.taskNames.any { Regex("(?i)(perf|release)").containsMatchIn(it) }
     splits {
         abi {
-            isEnable = gradle.startParameter.taskNames.any { Regex("(?i)(perf|release)").containsMatchIn(it) }
+            isEnable = arm64Only || releaseLike
             reset()
             include("arm64-v8a")
-            isUniversalApk = true
+            isUniversalApk = releaseLike && !arm64Only
         }
     }
     // 自带的运行环境(assets/runtime/rootfs.tar.xz,tools/sandbox/build-runtime.py 生成)已是 xz,不再压一遍

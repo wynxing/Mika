@@ -176,6 +176,8 @@ interface CardActions {
     fun closeKeptPage() {}
     /** 卡片最底下的「关闭悬浮胶囊」:设置里的开关改成关闭,胶囊和卡片当场收掉(任务照常跑、照常发通知)。 */
     fun hideCapsule() {}
+    /** 空闲卡片上的「教 Mika」。 */
+    fun teach() {}
     /** 胶囊卡片里切换「引导 / 排队」。 */
     fun setFollowUpMode(mode: FollowUpMode) {}
     /** 标题栏的电源按钮:在卡片里换成「完全退出」的确认,不马上退。 */
@@ -763,6 +765,11 @@ private fun ChatCard(
         }
         if (r != null) Pinned(card.content, r.run.key, actions)
         QueuedLine(queuedCount, onQueued)
+        if (r == null) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.Center) {
+                TextLink(tr(R.string.teach_menu)) { actions.teach() }
+            }
+        }
         input()
         FooterLinks(actions, card.target?.let { id -> CardCopy.BACK_TO_MIKA to { actions.openMika(id) } })
     }

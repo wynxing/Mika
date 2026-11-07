@@ -179,6 +179,8 @@ fun ChatScreen(
     voice: VoiceSource? = null,
     /** 「还不能语音输入」里的「去选」。 */
     openSpeechModel: () -> Unit = {},
+    /** 输入框里还没发出的字，交给「教 Mika」预填，不会自己开始。 */
+    onOpenTeach: (String) -> Unit = {},
 ) {
     val ui by vm.ui.collectAsState()
     val others by vm.otherRunning.collectAsState()
@@ -359,6 +361,7 @@ fun ChatScreen(
             mode = ui.composer,
             hasHistory = ui.exchanges.isNotEmpty(),
             onSend = { if (vm.send(input, check)) input = "" },
+            onTeach = if (ui.composer == ComposerMode.Idle) ({ onOpenTeach(input.trim()) }) else null,
             onStop = vm::cancel,
             followUpMode = ui.followUpMode,
             queued = ui.queued,
@@ -1173,6 +1176,8 @@ internal fun Composer(
     followUpStatus: ExchangeStatus? = null,
     /** 沙箱就绪、没有任务在跑时才有「＋」;点开是这块面板。 */
     attachPanel: (@Composable () -> Unit)? = null,
+    /** 「＋」面板里的「教 Mika」。点了先收起面板。 */
+    onTeach: (() -> Unit)? = null,
     attachments: List<PendingAttachment> = emptyList(),
     importing: Boolean = false,
     rejected: List<String> = emptyList(),
@@ -1379,7 +1384,17 @@ internal fun Composer(
                         layout(cons.maxWidth, shown) { p.place(0, 0) }
                     },
                 ) {
-                    Box(Modifier.fillMaxSize().padding(top = 4.dp)) { attachPanel() }
+                    Column(Modifier.fillMaxSize().padding(top = 4.dp)) {
+                        if (onTeach != null && panel == Panel.Open) {
+                            Text(
+                                stringResource(R.string.teach_menu),
+                                Modifier.fillMaxWidth().clickable { panel = Panel.Closed; onTeach() }
+                                    .padding(horizontal = 16.dp, vertical = 10.dp).testTag("teach-mika"),
+                                color = c.accent, style = MikaType.Body,
+                            )
+                        }
+                        Box(Modifier.weight(1f)) { attachPanel() }
+                    }
                 }
             }
         }
