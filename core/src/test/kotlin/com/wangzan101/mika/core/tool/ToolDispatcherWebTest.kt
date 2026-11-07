@@ -200,7 +200,6 @@ class ToolDispatcherWebTest {
     }
 
     @Test fun browserToolsAreNotBatchable() {
-        assertTrue(BATCHABLE.none { it.startsWith("browser_") })
         val (steps, problem) = BatchRunner.parse(
             """{"steps":[{"tool":"web_navigate","args":{"url":"https://example.com"}},{"tool":"web_tap","args":{"x":1,"y":1}}]}""",
             setOf("web_navigate", "web_tap"), BATCHABLE)

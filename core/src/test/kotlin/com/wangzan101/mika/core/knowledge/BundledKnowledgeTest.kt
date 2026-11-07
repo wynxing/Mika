@@ -1,6 +1,7 @@
 package com.wangzan101.mika.core.knowledge
 
 import com.wangzan101.mika.core.agent.KNOWLEDGE_BODY_LIMIT
+import com.wangzan101.mika.core.agent.TokenEstimate
 import com.wangzan101.mika.core.agent.KNOWLEDGE_TRUNCATED_HINT
 import com.wangzan101.mika.core.agent.clipKnowledge
 import org.junit.Assert.assertEquals
@@ -22,7 +23,7 @@ class BundledKnowledgeTest {
     @Test fun bundledTreesPassValidationAndIndexIsCurrent() {
         val r = KnowledgeIndex.build(resources)
         assertTrue(r.errors.joinToString("\n"), r.errors.isEmpty())
-        assertEquals(mapOf("app" to 23, "site" to 18, "skill" to 5), r.entries.groupingBy { it.kind }.eachCount())
+        assertEquals(mapOf("app" to 24, "site" to 18, "skill" to 6), r.entries.groupingBy { it.kind }.eachCount())
         // 类路径上的索引就是按当前文件生成的那份
         assertEquals(r.entries, catalog.rows)
     }
@@ -45,7 +46,7 @@ class BundledKnowledgeTest {
     }
 
     @Test fun everyEntryHasABody() {
-        assertEquals(41, bundled.size)
+        assertEquals(42, bundled.size)
         assertTrue(bundled.all { !it.body.isNullOrBlank() && it.body!!.length <= KnowledgeIndex.BODY_LIMIT })
         assertTrue(bundled.map { it.name }.containsAll(listOf("wechat", "xianyu", "android-settings", "zhihu.com", "weixin.sogou.com")))
     }
@@ -65,10 +66,11 @@ class BundledKnowledgeTest {
     }
 
     @Test fun longBodyTruncatedWithHint() {
-        val clipped = clipKnowledge("字".repeat(KNOWLEDGE_BODY_LIMIT + 500))
+        // 上限按 token:截后连同截断说明不超过上限,且几乎用满
+        val clipped = clipKnowledge("字".repeat(KNOWLEDGE_BODY_LIMIT * 2))
         assertTrue(clipped.startsWith("字".repeat(KNOWLEDGE_BODY_LIMIT)))
-        assertTrue(clipped.endsWith(KNOWLEDGE_TRUNCATED_HINT))
-        assertEquals(KNOWLEDGE_BODY_LIMIT + 1 + KNOWLEDGE_TRUNCATED_HINT.length, clipped.length)
+        assertTrue(clipped.endsWith("\n" + KNOWLEDGE_TRUNCATED_HINT))
+        assertTrue("${TokenEstimate.of(clipped)}", TokenEstimate.of(clipped) in KNOWLEDGE_BODY_LIMIT - 5..KNOWLEDGE_BODY_LIMIT)
         assertEquals("短", clipKnowledge("短"))
     }
 

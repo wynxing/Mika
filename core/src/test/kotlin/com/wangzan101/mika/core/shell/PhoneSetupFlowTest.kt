@@ -67,8 +67,6 @@ class PhoneSetupFlowTest {
         // 连上了就算成功,不管前面读到什么
         assertEquals(SetupPhase.Success, PhoneSetupFlow.view(i.copy(status = BuiltinShellStatus.Running)).phase)
         assertEquals(SetupPhase.Working, PhoneSetupFlow.view(i.copy(status = BuiltinShellStatus.Connecting)).phase)
-        // 确认过的几步都有「下一步」;无障碍靠跳过,配对和连接要真的做成
-        assertEquals(setOf(SetupStep.DeveloperOptions, SetupStep.UsbDebugging, SetupStep.WirelessDebugging), PhoneSetupFlow.CONFIRMABLE)
     }
 
     @Test
@@ -222,13 +220,6 @@ class PhoneSetupFlowTest {
         assertEquals(BuiltinShellFix.Retry, helper.failure?.fix)
 
         assertEquals(BuiltinShellFix.OpenWifi, BuiltinShellStatus.Failed(BuiltinShellFailure.NoWifi).fix)
-    }
-
-    @Test
-    fun repairShowsPairingStepUntilNewPairingStarts() {
-        val running = SetupInputs(true, true, BuiltinShellStatus.Running, repair = true)
-        assertEquals(SetupStep.PairingCode, PhoneSetupFlow.view(running).current)
-        assertEquals(SetupPhase.Working, PhoneSetupFlow.view(running.copy(status = BuiltinShellStatus.Connecting)).phase)
     }
 
     @Test
@@ -437,5 +428,34 @@ class PhoneSetupFlowTest {
         assertEquals(SetupPhase.Guide, v.phase)
         val ok = PhoneSetupFlow.view(switchesOn.copy(status = BuiltinShellStatus.Running, restart = HelperRestart.Wireless))
         assertTrue(ok.markList().all { it == StepMark.Done })
+    }
+
+    private val noWay = fresh.copy(developerSettingsMissing = true, wirelessMissing = true)
+
+    @Test
+    fun environmentWithoutDeveloperOptionsOrWirelessDebuggingSaysSoUpFront() {
+        val v = PhoneSetupFlow.view(noWay)
+        assertEquals(SetupPhase.Unavailable, v.phase)
+        assertNull(v.current)
+        assertFalse(v.usbFallback)
+        assertTrue(v.markList().all { it == StepMark.Todo })
+        // 配对失败过、点了「重新配对」也一样
+        assertEquals(SetupPhase.Unavailable, PhoneSetupFlow.view(noWay.copy(status = BuiltinShellStatus.Failed(BuiltinShellFailure.ConnectFailed))).phase)
+        assertEquals(SetupPhase.Unavailable, PhoneSetupFlow.view(noWay.copy(repair = true)).phase)
+    }
+
+    @Test
+    fun onlyOneOfTheTwoMissingStillGuides() {
+        assertEquals(SetupPhase.Guide, PhoneSetupFlow.view(fresh.copy(developerSettingsMissing = true)).phase)
+        assertEquals(SetupPhase.Guide, PhoneSetupFlow.view(fresh.copy(wirelessMissing = true)).phase)
+    }
+
+    @Test
+    fun aHelperThatRunsOrRanBeforeMeansThereIsAWay() {
+        assertEquals(SetupPhase.Success, PhoneSetupFlow.view(noWay.copy(status = BuiltinShellStatus.Running)).phase)
+        assertFalse(PhoneSetupFlow.unavailable(noWay.copy(status = BuiltinShellStatus.Connecting)))
+        assertFalse(PhoneSetupFlow.unavailable(noWay.copy(restart = HelperRestart.UsbCommand)))
+        assertFalse(PhoneSetupFlow.unavailable(noWay.copy(restart = HelperRestart.Wireless)))
+        assertTrue(PhoneSetupFlow.unavailable(true, true, BuiltinShellStatus.NotPaired, HelperRestart.None))
     }
 }

@@ -62,9 +62,9 @@ class PromptLayoutTest {
 
     @Test fun noOrphanFiles() {
         assertEquals(setOf("identity.md", "principles.md"), files("system"))
-        assertEquals((listOf("phone", "batch", "web", "sandbox", "general", "inline-screen", "channels", "groups", "handover")).map { "$it.md" }.toSet(), files("capabilities"))
+        assertEquals((listOf("phone", "app-access", "batch", "web", "sandbox", "general", "inline-screen", "channels", "groups", "handover", "root")).map { "$it.md" }.toSet(), files("capabilities"))
         assertEquals(Feedback.FILES.map { "$it.md" }.toSet(), files("feedback"))
-        val roles = setOf("describe", "intent_gate", "locate", "memory_extract", "route_match", "skill_draft", "app_knowledge", "app_knowledge_input", "verifier", "outcome_judge", "user_screen", "stop_summary", "conversation_title")
+        val roles = setOf("app_classifier", "describe", "intent_gate", "locate", "memory_extract", "route_match", "skill_draft", "app_knowledge", "app_knowledge_input", "verifier", "outcome_judge", "user_screen", "stop_summary", "conversation_title")
         assertEquals(roles.map { "$it.md" }.toSet(), files("roles"))
         roles.forEach { assertTrue(Prompts.role(it).isNotBlank()) }
         assertEquals(setOf("README.md"), root.listFiles().orEmpty().filter { it.isFile }.map { it.name }.toSet())

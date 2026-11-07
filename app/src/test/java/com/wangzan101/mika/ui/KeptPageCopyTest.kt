@@ -25,15 +25,4 @@ class KeptPageCopyTest {
         assertNull(KeptRow.of(ex("r2"), page))
         assertNull(KeptRow.of(ex(null), null))
     }
-
-    @Test fun closedNoteAndDurations() {
-        assertEquals("后台网页已关闭（到时间了）", KeptPageCopy.closedNote("expired"))
-        assertEquals("后台网页已关闭（内存不够，被系统收回）", KeptPageCopy.closedNote("memory"))
-        assertEquals("后台网页已关闭（留下了另一页）", KeptPageCopy.closedNote("replaced"))
-        assertEquals("后台网页已关闭", KeptPageCopy.closedNote(null))
-        assertEquals("2 小时", KeptPageCopy.duration(7_200_000))
-        assertEquals("1 小时 52 分", KeptPageCopy.duration(112 * 60_000L))
-        assertEquals("1 分钟", KeptPageCopy.duration(5_000))
-        assertEquals("1 分钟", KeptPageCopy.duration(-5))
-    }
 }

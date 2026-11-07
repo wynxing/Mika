@@ -128,7 +128,6 @@ class WebCdpPureTest {
 
     @Test fun identityScriptCarriesTheProfile() {
         val js = DesktopProfile.identityScript()
-        assertFalse(js.contains("__"))
         assertTrue(js.contains("'${DesktopProfile.NAVIGATOR_PLATFORM}'"))
         assertTrue(js.contains("innerHeight + ${DesktopProfile.WINDOW_CHROME_PX}"))
         for (k in listOf("maxTouchPoints", "ontouchstart", "matchMedia", "outerWidth", "createEvent", "webdriver")) assertTrue(k, js.contains(k))

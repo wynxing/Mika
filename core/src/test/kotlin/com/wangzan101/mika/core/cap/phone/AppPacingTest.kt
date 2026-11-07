@@ -129,7 +129,6 @@ class AppPacingTest {
         assertEquals(TypingPacing.Limits.CAREFUL, OperatingPace.STANDARD.typing(PlacePace.CAREFUL).limits)
         assertEquals(TypingPacing.Limits.CAREFUL, OperatingPace.HUMAN.typing(PlacePace.NORMAL).limits)
 
-        assertEquals(OperatingPace.STANDARD, OperatingPace.DEFAULT)
         assertEquals(OperatingPace.HUMAN, OperatingPace.parse("human"))
         assertEquals(OperatingPace.FAST, OperatingPace.parse(" FAST "))
         assertEquals(null, OperatingPace.parse("quick"))

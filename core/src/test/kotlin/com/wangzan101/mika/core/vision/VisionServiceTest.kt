@@ -58,11 +58,4 @@ class VisionServiceTest {
         assertEquals(2, hamming(0b1010L, 0b0110L))
         assertEquals(64, hamming(0L, -1L))
     }
-
-    @Test fun testOpsHashSeparatesDifferentFrames() {
-        val left = ops.encode(100, 100) { x, _ -> if (x < 50) 0 else 255 }
-        val top = ops.encode(100, 100) { _, y -> if (y < 50) 0 else 255 }
-        assertEquals(0, hamming(ops.aHash(left), ops.aHash(left.copyOf())))
-        assertTrue(hamming(ops.aHash(left), ops.aHash(top)) > 8)
-    }
 }

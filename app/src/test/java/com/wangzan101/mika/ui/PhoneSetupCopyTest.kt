@@ -6,13 +6,13 @@ import com.wangzan101.mika.core.shell.BuiltinShellFailure
 import com.wangzan101.mika.core.shell.BuiltinShellFix
 import com.wangzan101.mika.core.shell.BuiltinShellStatus
 import com.wangzan101.mika.core.shell.HelperRestart
+import com.wangzan101.mika.core.shell.RootGrant
 import com.wangzan101.mika.core.shell.SetupStep
 import com.wangzan101.mika.core.shell.SetupSuspect
 import com.wangzan101.mika.settings.Problem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import com.wangzan101.mika.ui.components.ValueTone
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -28,6 +28,17 @@ class PhoneSetupCopyTest {
         BuiltinShellFailure.entries.forEach { val f = PhoneSetupCopy.failure(it); add(f.title); add(f.body) }
         BuiltinShellFix.entries.forEach { add(PhoneSetupCopy.fixLabel(it)) }
         statuses.forEach { add(PhoneSetupCopy.statusLine(it)); add(PhoneSetupCopy.statusLine(it, usbDebugging = false)); add(PhoneSetupCopy.statusValue(it).first) }
+        statuses.forEach { add(PhoneSetupCopy.statusLine(it, rootStart = true)) }
+        RootGrant.entries.forEach {
+            add(PhoneSetupCopy.rootStartLine(it)); add(PhoneSetupCopy.rootStatusLine(it))
+            add(PhoneSetupCopy.rootCommandsLine(true, it)); add(PhoneSetupCopy.rootCommandsLine(false, it))
+        }
+        addAll(listOf(
+            PhoneSetupCopy.ROOT_START, PhoneSetupCopy.ROOT_COMMANDS, PhoneSetupCopy.ROOT_COMMANDS_TITLE, PhoneSetupCopy.ROOT_COMMANDS_WARNING,
+            PhoneSetupCopy.ROOT_NOTE, PhoneSetupCopy.ROOT_COMMANDS_NOTE, PhoneSetupCopy.ROOT_AVAILABLE, PhoneSetupCopy.ROOT_AUTO,
+            PhoneSetupCopy.ROOT_STATUS_TITLE, PhoneSetupCopy.ROOT_COMMANDS_GROUP,
+            PhoneSetupCopy.rootEntryLine(false), PhoneSetupCopy.rootEntryLine(true),
+        ))
         addAll(
             listOf(
                 PhoneSetupCopy.SUCCESS_LINE, PhoneSetupCopy.UNPAIR_BODY, PhoneSetupCopy.SKIP_NOTE, PhoneSetupCopy.DEGRADED_LINE, PhoneSetupCopy.PORT_FOUND,
@@ -57,29 +68,6 @@ class PhoneSetupCopyTest {
     ) + BuiltinShellFailure.entries.map { BuiltinShellStatus.Failed(it) }
 
     @Test
-    fun copyIsPlainChinese() {
-        // 连不上时要用户照着「无线调试」页面填端口:只有这一句直说「端口」
-        val portAllowed = PhoneSetupCopy.failure(BuiltinShellFailure.ConnectFailed).body
-        allText().forEach { t ->
-            assertTrue("empty copy", t.isNotBlank())
-            jargon.forEach { j -> if (!(j == "端口" && t == portAllowed)) assertFalse("「$j」 in: $t", t.contains(j, ignoreCase = true)) }
-            // 只有系统里那个选项名本身带 adb
-            if (t.contains("adb")) assertTrue(t, t.contains("「停用 adb 授权超时功能」"))
-        }
-    }
-
-    /** 自动找不到端口时说清楚能做什么,并照着「无线调试」页面填端口。 */
-    @Test
-    fun connectFailureSaysWhatToTryAndHowToFindThePort() {
-        val body = PhoneSetupCopy.failure(BuiltinShellFailure.ConnectFailed).body
-        assertEquals("找不到无线调试的端口。可以：关掉再打开「无线调试」后重试；换用手机热点或家里的 Wi-Fi；或在下面手动填端口。", body)
-        assertEquals("填无线调试的端口", PhoneSetupCopy.CONNECT_PORT_LABEL)
-        assertTrue(PhoneSetupCopy.CONNECT_PORT_HINT.contains("「IP 地址和端口」冒号后面的数字"))
-        assertEquals("连接", PhoneSetupCopy.CONNECT_PORT_SUBMIT)
-        assertEquals("正在本机查找无线调试端口…", PhoneSetupCopy.SCANNING_PORTS)
-    }
-
-    @Test
     fun connectPortInputAcceptsOnlyValidPorts() {
         assertEquals(41235, ConnectPortInput.parse("41235"))
         assertEquals(41235, ConnectPortInput.parse(" 41 235 "))
@@ -93,90 +81,60 @@ class PhoneSetupCopyTest {
     }
 
     @Test
-    fun eachStepPointsToTheRightPlace() {
-        assertEquals("打开关于手机", PhoneSetupCopy.step(SetupStep.DeveloperOptions).action)
-        assertTrue(PhoneSetupCopy.step(SetupStep.DeveloperOptions).body.contains("版本号"))
-        assertTrue(PhoneSetupCopy.step(SetupStep.WirelessDebugging).body.contains("无线调试"))
-        assertTrue(PhoneSetupCopy.step(SetupStep.PairingCode).body.contains("使用配对码配对设备"))
-        // 配对码怎么交给 Mika:无障碍开着时自己读,没开时按三步在通知里填
+    fun reconnectOnlyWhenRetryingIsTheFix() {
+        val reconnectable = statuses.filter { PhoneSetupCopy.canReconnect(it) }
         assertEquals(
-            listOf("点「使用配对码配对设备」", "屏幕顶部弹出 Mika 的通知；没看到就下拉通知栏", "点「填配对码」，输入 6 位数字"),
-            PhoneSetupCopy.NOTIFY_GUIDE,
+            // root 被拒绝、没回应:点重试再问一次 su；非本机地址修正后也可重试。
+            listOf(
+                BuiltinShellFailure.ConnectFailed, BuiltinShellFailure.NotLocal, BuiltinShellFailure.HelperStartFailed,
+                BuiltinShellFailure.RootDenied, BuiltinShellFailure.RootNoAnswer, BuiltinShellFailure.Unknown,
+            ),
+            reconnectable.map { (it as BuiltinShellStatus.Failed).reason },
         )
-        assertTrue(PhoneSetupCopy.NOTIFY_GUIDE[2].contains("「${PhoneSetupCopy.NOTIFY_ACTION}」"))
-        assertTrue(PhoneSetupCopy.AUTO_READ_HINT.contains("自己读"))
-        assertNull(PhoneSetupCopy.step(SetupStep.Connect).action)
-        // USB 调试一步讲清好处:不插线、断开 Wi-Fi 也能用
-        val usb = PhoneSetupCopy.step(SetupStep.UsbDebugging)
-        assertTrue(usb.body.contains("「USB 调试」"))
-        assertTrue(usb.body.contains("Wi-Fi"))
-        assertTrue(usb.body.contains("数据线"))
-        // 开发者选项里有会清除数据的开关:向导开头和这一步都提醒别的开关不要动(第 2 步自动打勾时只看得到开头那句)
-        assertTrue(usb.body.contains("清除手机数据"))
-        assertTrue(PhoneSetupCopy.INTRO.contains("清除手机数据"))
-    }
-
-    @Test
-    fun accessibilityStepExplainsTheBenefitAndTheWayOut() {
-        val a11y = PhoneSetupCopy.step(SetupStep.Accessibility)
-        assertTrue(a11y.body.contains("不用手动填"))
-        assertTrue(a11y.body.contains("「无障碍」"))
-        assertTrue(PhoneSetupCopy.APP_INFO.contains("受限制的设置"))
-    }
-
-    @Test
-    fun skippingAccessibilityReadsAsTheRecommendedPath() {
-        assertEquals("跳过(配对后 Mika 会自己打开)", PhoneSetupCopy.ACCESSIBILITY_SKIP)
-        assertTrue(PhoneSetupCopy.step(SetupStep.Accessibility).body.contains("推荐"))
-        assertEquals("我已经打开了,下一步", PhoneSetupCopy.TURNED_ON_NEXT)
-    }
-
-    @Test
-    fun suspectsNameTheStepAndHowItWasRead() {
-        assertTrue(PhoneSetupCopy.suspect(suspects[0]).contains("开发者选项"))
-        assertTrue(PhoneSetupCopy.suspect(suspects[1]).contains("好像没开"))
-        assertTrue(PhoneSetupCopy.suspect(suspects[2]).contains("读不到"))
-        assertEquals("回到「打开无线调试」", PhoneSetupCopy.goBackTo(SetupStep.WirelessDebugging))
-    }
-
-    @Test
-    fun alwaysAllowCheckboxIsNamedTheSameEverywhere() {
-        val box = "「始终允许使用此网络」"
+        reconnectable.forEach { s ->
+            assertEquals(Fix.RetryPhoneHelper, StatusCopy.directFix(Problem.PhoneHelper(s)))
+        }
+        // 没配对要走引导;无线调试关着要先去打开;没 Wi-Fi 会自己恢复;配对失效要重新配对
         listOf(
-            PhoneSetupCopy.step(SetupStep.WirelessDebugging).body, PhoneSetupCopy.failure(BuiltinShellFailure.WifiNotAllowed).body,
-            PhoneSetupCopy.WIFI_NOT_ALLOWED_LINE,
-        ).forEach { assertTrue(it, it.contains(box)) }
+            BuiltinShellStatus.NotPaired, BuiltinShellStatus.WirelessDebuggingOff, BuiltinShellStatus.Connecting,
+            BuiltinShellStatus.Running, BuiltinShellStatus.Failed(BuiltinShellFailure.NoWifi),
+            BuiltinShellStatus.Failed(BuiltinShellFailure.AuthorizationRevoked),
+        ).forEach { assertFalse(PhoneSetupCopy.canReconnect(it)) }
     }
 
     @Test
-    fun notificationReadsAsAnInstruction() {
-        assertEquals("输入配对码", PhoneSetupCopy.NOTIFY_ENTER_TITLE)
-        assertEquals("把屏幕上的 6 位数字填在这里，不用离开配对窗口", PhoneSetupCopy.NOTIFY_ENTER_TEXT)
-        assertEquals("填配对码", PhoneSetupCopy.NOTIFY_ACTION)
-        assertEquals("6 位数字", PhoneSetupCopy.NOTIFY_INPUT_LABEL)
-        assertEquals("正在配对…", PhoneSetupCopy.NOTIFY_WORKING)
-        assertEquals("配对成功", PhoneSetupCopy.NOTIFY_DONE_TITLE)
+    fun bannerAndFixForPhoneHelperProblem() {
+        statuses.filter { it != BuiltinShellStatus.Running }.forEach { s ->
+            val p = Problem.PhoneHelper(s)
+            val fix = when {
+                PhoneSetupCopy.canReconnect(s) -> Fix.RetryPhoneHelper
+                // 这个 Wi-Fi 还没允许无线调试:直接去亲手打开一次
+                s == BuiltinShellStatus.Failed(BuiltinShellFailure.WifiNotAllowed) -> Fix.OpenWirelessDebugging
+                else -> Fix.OpenPhoneSetup
+            }
+            assertEquals(fix, StatusCopy.directFix(p))
+            assertEquals(Fix.OpenPhoneSetup, StatusCopy.explain(p, "14").fix)
+        }
     }
 
     @Test
-    fun notificationErrorsSayHowToGetANewCode() {
-        assertEquals(
-            "配对码不对或已失效：在配对窗口重新点「使用配对码配对设备」拿新的码，再填一次",
-            PhoneSetupCopy.notifyRetry(BuiltinShellFailure.WrongCode),
-        )
-        assertTrue(PhoneSetupCopy.notifyRetry(BuiltinShellFailure.PairingWindowClosed).contains("「使用配对码配对设备」拿新的码，再填一次"))
-        assertEquals("要填 6 位数字，再填一次", PhoneSetupCopy.NOTIFY_CODE_INVALID)
-        // 配对码要在通知里填:通知没开时一句话说清为什么
-        assertTrue(PhoneSetupCopy.NEED_NOTIFICATIONS.startsWith("配对码要在通知里填"))
-        assertTrue(PhoneSetupCopy.PAIRING_CHANNEL_OFF.contains("「${PhoneSetupCopy.CHANNEL_NAME}」"))
-        assertTrue(PhoneSetupCopy.PAIRING_LOWERED.contains("「在屏幕上弹出」"))
+    fun copyIsPlainChinese() {
+        // 连不上时要用户照着「无线调试」页面填端口:只有这一句直说「端口」
+        val portAllowed = PhoneSetupCopy.failure(BuiltinShellFailure.ConnectFailed).body
+        allText().forEach { t ->
+            assertTrue("empty copy", t.isNotBlank())
+            jargon.forEach { j -> if (!(j == "端口" && t == portAllowed)) assertFalse("「$j」 in: $t", t.contains(j, ignoreCase = true)) }
+            // 只有系统里那个选项名本身带 adb
+            if (t.contains("adb")) assertTrue(t, t.contains("「停用 adb 授权超时功能」"))
+        }
     }
 
     @Test
-    fun runningWithoutUsbDebuggingGetsAGentleHint() {
-        assertEquals("已就绪" to ValueTone.Ok, PhoneSetupCopy.statusValue(BuiltinShellStatus.Running))
-        assertEquals("已连接,能操作手机 App", PhoneSetupCopy.statusLine(BuiltinShellStatus.Running))
-        assertTrue(PhoneSetupCopy.statusLine(BuiltinShellStatus.Running, usbDebugging = false).contains("Wi-Fi 断开后会停止"))
+    fun failuresAreDistinctAndActionable() {
+        val titles = BuiltinShellFailure.entries.map { PhoneSetupCopy.failure(it).title }
+        assertEquals(titles.size, titles.toSet().size)
+        assertEquals("重新配对", PhoneSetupCopy.fixLabel(BuiltinShellStatus.Failed(BuiltinShellFailure.WrongCode).fix))
+        assertEquals("重试", PhoneSetupCopy.fixLabel(BuiltinShellStatus.Failed(BuiltinShellFailure.HelperStartFailed).fix))
     }
 
     /** USB 命令起的助手停了:设置页、横幅都直说停了、再运行命令;不往无线调试引(有的手机根本没有)。 */
@@ -203,75 +161,61 @@ class PhoneSetupCopyTest {
         assertTrue(PhoneSetupCopy.USB_BODY.contains("重启后"))
     }
 
-    /** 成功页和设置页底部:USB 命令起的说重启后再运行命令,配对过的照旧说打开无线调试会自动重连。 */
+    /** 「用 root 启动」用不了时,设置页、横幅都直说原因和怎么办;拒绝、没回应的给重试。正在用 root 启动时照实说。 */
     @Test
-    fun restartNotesFollowHowTheHelperWasStarted() {
-        assertTrue(PhoneSetupCopy.successNote(HelperRestart.Wireless).contains("无线调试"))
-        assertEquals(PhoneSetupCopy.successNote(HelperRestart.Wireless), PhoneSetupCopy.successNote(HelperRestart.None))
-        val usb = PhoneSetupCopy.successNote(HelperRestart.UsbCommand)
-        assertTrue(usb, usb.contains("再运行一次命令"))
-        assertFalse(usb, usb.contains("无线调试"))
-        assertTrue(PhoneSetupCopy.usageNote(HelperRestart.UsbCommand).contains("再运行一次启动命令"))
-        assertTrue(PhoneSetupCopy.usageNote(HelperRestart.Wireless).contains("打开「无线调试」"))
+    fun rootStartStatusSaysWhyAndWhatToDo() {
+        val denied = BuiltinShellStatus.Failed(BuiltinShellFailure.RootDenied)
+        assertEquals("root 授权被拒绝了", PhoneSetupCopy.failure(BuiltinShellFailure.RootDenied).title)
+        assertTrue(PhoneSetupCopy.statusLine(denied).contains("重试"))
+        assertTrue(PhoneSetupCopy.canReconnect(denied))
+        val banner = StatusCopy.banner(Problem.PhoneHelper(denied))
+        assertEquals("root 授权被拒绝了", banner.title)
+        assertEquals(PhoneSetupCopy.RECONNECT, banner.link)
+        val gone = BuiltinShellStatus.Failed(BuiltinShellFailure.RootUnavailable)
+        assertTrue(PhoneSetupCopy.statusLine(gone).contains("找不到 su"))
+        assertFalse(PhoneSetupCopy.canReconnect(gone))
+        assertEquals("手机助手没在运行,正在用 root 启动…", PhoneSetupCopy.statusLine(BuiltinShellStatus.Connecting, rootStart = true))
+        assertEquals(PhoneSetupCopy.statusLine(BuiltinShellStatus.Connecting), PhoneSetupCopy.statusLine(BuiltinShellStatus.Connecting, rootStart = false))
+        // 经 root 起的不靠 Wi-Fi:USB 调试关着也不提醒断 Wi-Fi 会停
+        assertEquals(PhoneSetupCopy.statusLine(BuiltinShellStatus.Running), PhoneSetupCopy.statusLine(BuiltinShellStatus.Running, usbDebugging = false, rootStart = true))
     }
 
+    /** 自动启动没有开关:首次明确授权,之后自动;拒绝和没回应都能亲手重试。Root 命令仍默认关闭。 */
     @Test
-    fun noWifiSaysItRecoversByItself() {
-        val noWifi = BuiltinShellStatus.Failed(BuiltinShellFailure.NoWifi)
-        assertTrue(PhoneSetupCopy.failure(BuiltinShellFailure.NoWifi).body.contains("自动恢复"))
-        assertTrue(PhoneSetupCopy.statusLine(noWifi).contains("自动恢复"))
-        assertTrue(StatusCopy.banner(Problem.PhoneHelper(noWifi)).detail.contains("自动恢复"))
+    fun rootLinesFollowAuthorization() {
+        assertEquals(PhoneSetupCopy.ROOT_PENDING, PhoneSetupCopy.rootStartLine(RootGrant.Pending))
+        assertTrue(PhoneSetupCopy.rootStartLine(RootGrant.Unknown).contains("点这里授权"))
+        assertTrue(PhoneSetupCopy.rootStartLine(RootGrant.Granted).contains("已授权"))
+        assertTrue(PhoneSetupCopy.rootStartLine(RootGrant.Denied).contains("再问一次"))
+        assertTrue(PhoneSetupCopy.rootStartLine(RootGrant.NoAnswer).contains("再问一次"))
+        assertTrue(PhoneSetupCopy.rootStatusLine(RootGrant.Unknown).contains("检测到 su"))
+        assertTrue(PhoneSetupCopy.rootStatusLine(RootGrant.Granted).contains("已授权"))
+        assertFalse(PhoneSetupCopy.rootStatusLine(RootGrant.Denied).contains("再问一次"))
+        assertTrue(PhoneSetupCopy.rootCommandsLine(false, RootGrant.Unknown).contains("默认关闭"))
+        assertTrue(PhoneSetupCopy.rootCommandsLine(true, RootGrant.Granted).contains("已开启"))
+        assertTrue(PhoneSetupCopy.rootCommandsLine(false, RootGrant.Denied).contains("保持关闭"))
+        assertTrue(PhoneSetupCopy.rootEntryLine(false).contains("已关闭"))
+        assertTrue(PhoneSetupCopy.rootEntryLine(true).contains("已开启"))
+        assertTrue(PhoneSetupCopy.ROOT_COMMANDS_WARNING.contains("其他 App 的数据"))
+        assertEquals("允许 Mika 执行 root 命令", PhoneSetupCopy.ROOT_COMMANDS)
+        assertEquals("用 root 启动手机助手", PhoneSetupCopy.ROOT_START)
     }
 
+    /** USB 启动不承诺拔线后一定能用:成功页、设置页和重跑卡片都给出通用恢复办法。 */
     @Test
-    fun failuresAreDistinctAndActionable() {
-        val titles = BuiltinShellFailure.entries.map { PhoneSetupCopy.failure(it).title }
-        assertEquals(titles.size, titles.toSet().size)
-        assertEquals("重新配对", PhoneSetupCopy.fixLabel(BuiltinShellStatus.Failed(BuiltinShellFailure.WrongCode).fix))
-        assertEquals("重试", PhoneSetupCopy.fixLabel(BuiltinShellStatus.Failed(BuiltinShellFailure.HelperStartFailed).fix))
-    }
-
-    @Test
-    fun statusValuesForSettings() {
-        assertEquals("已就绪" to ValueTone.Ok, PhoneSetupCopy.statusValue(BuiltinShellStatus.Running))
-        assertEquals("未设置" to ValueTone.Bad, PhoneSetupCopy.statusValue(BuiltinShellStatus.NotPaired))
-        assertEquals("配对码不对或已过期", PhoneSetupCopy.statusLine(BuiltinShellStatus.Failed(BuiltinShellFailure.WrongCode)))
-    }
-
-    @Test
-    fun reconnectOnlyWhenRetryingIsTheFix() {
-        val reconnectable = statuses.filter { PhoneSetupCopy.canReconnect(it) }
-        assertEquals(
-            listOf(BuiltinShellFailure.ConnectFailed, BuiltinShellFailure.HelperStartFailed, BuiltinShellFailure.Unknown),
-            reconnectable.map { (it as BuiltinShellStatus.Failed).reason },
-        )
-        reconnectable.forEach { s ->
-            assertEquals("重新连接", StatusCopy.banner(Problem.PhoneHelper(s)).link)
-            assertEquals(Fix.RetryPhoneHelper, StatusCopy.directFix(Problem.PhoneHelper(s)))
-        }
-        // 没配对要走引导;无线调试关着要先去打开;没 Wi-Fi 会自己恢复;配对失效要重新配对
+    fun usbCopyDoesNotPromiseUnplugSurvival() {
         listOf(
-            BuiltinShellStatus.NotPaired, BuiltinShellStatus.WirelessDebuggingOff, BuiltinShellStatus.Connecting,
-            BuiltinShellStatus.Running, BuiltinShellStatus.Failed(BuiltinShellFailure.NoWifi),
-            BuiltinShellStatus.Failed(BuiltinShellFailure.AuthorizationRevoked),
-        ).forEach { assertFalse(PhoneSetupCopy.canReconnect(it)) }
-    }
-
-    @Test
-    fun bannerAndFixForPhoneHelperProblem() {
-        statuses.filter { it != BuiltinShellStatus.Running }.forEach { s ->
-            val p = Problem.PhoneHelper(s)
-            val fix = when {
-                PhoneSetupCopy.canReconnect(s) -> Fix.RetryPhoneHelper
-                // 这个 Wi-Fi 还没允许无线调试:直接去亲手打开一次
-                s == BuiltinShellStatus.Failed(BuiltinShellFailure.WifiNotAllowed) -> Fix.OpenWirelessDebugging
-                else -> Fix.OpenPhoneSetup
-            }
-            assertEquals(fix, StatusCopy.directFix(p))
-            val b = StatusCopy.banner(p)
-            jargon.forEach { j -> assertFalse(b.title.contains(j) || b.detail.contains(j)) }
-            assertEquals(Fix.OpenPhoneSetup, StatusCopy.explain(p, "14").fix)
+            PhoneSetupCopy.successNote(HelperRestart.UsbCommand),
+            PhoneSetupCopy.usageNote(HelperRestart.UsbCommand),
+            PhoneSetupCopy.usbCard(HelperRestart.UsbCommand).second,
+        ).forEach { text ->
+            assertTrue(text, text.contains("多数手机"))
+            assertTrue(text, text.contains("拔掉数据线"))
+            assertTrue(text, text.contains("再运行一次"))
+            assertFalse(text, text.contains("拔掉数据线也会继续运行"))
         }
-        assertEquals("手机操作还没设置", StatusCopy.banner(Problem.PhoneHelper(BuiltinShellStatus.NotPaired)).title)
+        // 无线调试路径的提示不受 USB 恢复说明影响
+        assertFalse(PhoneSetupCopy.successNote(HelperRestart.Wireless).contains("拔掉数据线"))
+        assertFalse(PhoneSetupCopy.usageNote(HelperRestart.Wireless).contains("拔掉数据线"))
     }
 }

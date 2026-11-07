@@ -137,7 +137,7 @@ class UpdateCheckerTest {
         github = release("v0.2.0")
         val c = checker()
         val ran = listOf(async { c.autoCheck() }, async { c.autoCheck() }).awaitAll()
-        assertEquals(listOf(true, false), ran.sorted().reversed())
+        assertEquals(1, ran.count { it })
         assertEquals(1, hits.size)
         clock += 10 * 60 * 1000L
         assertTrue(c.autoCheck())

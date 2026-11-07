@@ -27,6 +27,8 @@ import com.wangzan101.mika.voice.VoiceSource
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
+import com.wangzan101.mika.voice.SpeechFailure
+import androidx.compose.ui.test.onNodeWithText
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
@@ -109,6 +111,42 @@ class VoiceHoldTest {
         compose.waitForIdle()
         assertEquals(0, voice.sessions.size)
         assertEquals(0, compose.onAllNodesWithTag("voice-listen").fetchSemanticsNodes().size)
+    }
+
+    @Test fun focusedMicButtonFillsTheField() {
+        composer("帮我")
+        compose.onNodeWithTag("composer-field").performClick()
+        compose.onNodeWithTag("composer-field").assertIsFocused()
+        waitTag("composer-mic")
+        compose.onNodeWithTag("composer-mic").performTouchInput { down(center) }
+        waitTag("voice-listen")
+        val session = voice.sessions.single()
+        session.out.trySend(SpeechEvent.Partial("订明天", "的票"))
+        Thread.sleep(700)
+        compose.onNodeWithTag("composer-mic").performTouchInput { up() }
+        compose.waitUntil(5_000) { session.released == 1 }
+        session.out.trySend(SpeechEvent.Final("订明天的票"))
+        session.out.close()
+        waitNoTag("voice-listen")
+        compose.onNodeWithTag("composer-field").assertTextEquals("帮我订明天的票")
+    }
+
+    /** 已允许录音,识别服务仍报录音出错:弹说明(麦克风总开关、权限管理);别的麦克风起不来照旧只提示一句。 */
+    @Test fun audioErrorExplainsWhereToCheckButClientErrorKeepsTheOldHint() {
+        composer()
+        fun failWith(why: SpeechFailure) {
+            compose.onNodeWithTag("composer-field").performTouchInput { down(center) }
+            waitTag("voice-listen")
+            voice.sessions.last().out.trySend(SpeechEvent.Failed(why))
+            compose.onNodeWithTag("composer-field").performTouchInput { up() }
+        }
+        failWith(SpeechFailure.MicUnavailable)
+        waitTag("voice-toast")
+        compose.onNodeWithText("麦克风用不了，可能正被别的 App 占着").assertExists()
+        assertEquals(0, compose.onAllNodesWithTag("voice-sheet").fetchSemanticsNodes().size)
+        failWith(SpeechFailure.AudioError)
+        waitTag("voice-sheet")
+        compose.onNodeWithText("麦克风还是用不了").assertExists()
     }
 
     @Test fun slidingUpCancels() {

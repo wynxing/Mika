@@ -1,6 +1,8 @@
 package com.wangzan101.mika.core.memory
 
+import com.wangzan101.mika.core.agent.TokenEstimate
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -25,10 +27,13 @@ class MemoryContextFullModeTest {
 
     @Test fun autoFallsBackToRelevantWhenTooBig() {
         val filler = "很".repeat(120)
-        val items = (1..120).map { mem("第${it}条$filler", keywords = listOf("外卖")) }
+        // 只有前 8 条讲外卖:退回检索时应当挑出它们,而不是因为每条都带同一个词就一条也不给
+        val items = (1..120).map { mem("第${it}条$filler", keywords = if (it <= 8) listOf("外卖") else emptyList()) }
         val block = MemoryContext.build(items, goal = "点外卖", lastUserTurn = null, mode = MemoryContext.Mode.Auto)
-        assertTrue(block.usedIds.size <= MemoryContext.MAX_PINNED + MemoryContext.MAX_RELEVANT)
-        block.message?.let { assertTrue(it.length <= MemoryContext.MAX_CHARS) }
+        assertTrue(block.usedIds.size in 1..MemoryContext.MAX_RELEVANT)
+        val message = block.message
+        assertNotNull(message)
+        assertTrue(TokenEstimate.of(message!!) <= MemoryContext.MAX_TOKENS)
     }
 
     @Test fun fullDropsOldestFactsBeforePinned() {
@@ -37,7 +42,7 @@ class MemoryContextFullModeTest {
         val facts = (1..80).map { mem("第${it}条$filler") }
         val block = MemoryContext.build(facts + pinned, goal = "随便", lastUserTurn = null, mode = MemoryContext.Mode.Full)
         assertTrue(pinned.id in block.usedIds)
-        assertTrue(block.message!!.length <= MemoryContext.FULL_MAX_CHARS)
+        assertTrue(TokenEstimate.of(block.message!!) <= MemoryContext.FULL_MAX_TOKENS)
         assertTrue(block.usedIds.size < facts.size)
     }
 

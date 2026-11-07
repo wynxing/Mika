@@ -4,6 +4,7 @@ import com.wangzan101.mika.core.model.Capabilities
 import com.wangzan101.mika.core.model.ChatModel
 import com.wangzan101.mika.core.model.ListedModel
 import com.wangzan101.mika.core.model.Message
+import com.wangzan101.mika.core.model.ModelError
 import com.wangzan101.mika.core.model.ModelEndpoint
 import com.wangzan101.mika.core.model.ModelProtocol
 import com.wangzan101.mika.core.model.ModelReply
@@ -15,15 +16,18 @@ import com.wangzan101.mika.core.model.Usage
 import com.wangzan101.mika.core.usage.UsagePurpose
 import com.wangzan101.mika.core.usage.UsageSource
 import kotlinx.coroutines.test.runTest
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.util.concurrent.TimeUnit
 import javax.crypto.KeyGenerator
 
 class ProviderStoreTest {
@@ -61,6 +65,159 @@ class ProviderStoreTest {
 
     // ---------- 用途的选择 ----------
 
+    @Test fun modelContextSurvivesPruningAndIsSharedOnlyWithinTheSameProviderAndModel() {
+        val s = store()
+        val first = connected(s)
+        val second = connected(s, "Other")
+        s.use(ModelRole.Main, first.id, "m1", none)
+        s.use(ModelRole.Vision, second.id, "m1", none)
+        val cfg = s.configFor(ModelRole.Main)!!
+        val saved = ModelContextSettings(1_000_000, 600_000)
+        assertTrue(s.setModelContext(cfg.id, saved))
+        for (role in listOf(ModelRole.Main, ModelRole.Light)) {
+            val caps = s.modelFor(role)!!.capabilities
+            assertEquals(1_000_000, caps.contextTokens)
+            assertEquals(600_000, caps.compactionTriggerTokens)
+        }
+        assertEquals(64_000, s.modelFor(ModelRole.Vision)!!.capabilities.contextTokens)
+        assertNull(s.modelFor(ModelRole.Vision)!!.capabilities.compactionTriggerTokens)
+        s.use(ModelRole.Main, first.id, "m2", none)
+        assertNull(s.modelFor(ModelRole.Main)!!.capabilities.compactionTriggerTokens)
+        assertFalse(s.setModelContext(cfg.id, ModelContextSettings()))
+        val reloaded = store()
+        reloaded.use(ModelRole.Main, first.id, "m1", none)
+        assertEquals(saved, reloaded.provider(first.id)!!.contextSettings["m1"])
+        assertEquals(600_000, reloaded.modelFor(ModelRole.Main)!!.capabilities.compactionTriggerTokens)
+        assertTrue(reloaded.setModelContext(reloaded.configFor(ModelRole.Main)!!.id, ModelContextSettings()))
+        assertNull(store().provider(first.id)!!.contextSettings["m1"])
+    }
+
+    @Test fun perModelReadTimeoutFlowsIntoTheClientSetupAndPersists() {
+        // #295:慢速本地推理服务(例如经隧道访问)一次生成可以超过全局默认的 120 秒读超时;
+        // 每模型配置的读超时随 ModelContextSettings 存取,并进到建模型用的 ClientSetup 里。
+        val s = store()
+        val first = connected(s)
+        s.use(ModelRole.Main, first.id, "m1", none)
+        val cfg = s.configFor(ModelRole.Main)!!
+        val saved = ModelContextSettings(readTimeoutSeconds = 600)
+        assertTrue(s.setModelContext(cfg.id, saved))
+        s.modelFor(ModelRole.Main)
+        assertEquals(600, setups.last().readTimeoutSeconds)
+        val reloaded = store()
+        reloaded.use(ModelRole.Main, first.id, "m1", none)
+        assertEquals(saved, reloaded.provider(first.id)!!.contextSettings["m1"])
+        reloaded.modelFor(ModelRole.Main)
+        assertEquals(600, setups.last().readTimeoutSeconds)
+    }
+
+    @Test fun configuredReadTimeoutAppliesToTheRealHttpClient() = runTest {
+        MockWebServer().use { server ->
+            server.start()
+            // 响应头故意晚于单模型的一秒读超时;若配置没进入 OkHttp,这里不会抛 Network。
+            server.enqueue(MockResponse().setHeadersDelay(2, TimeUnit.SECONDS).setBody("{}"))
+            val s = ProviderStore(tmp.root, AesGcmKeyCipher { key })
+            val p = s.connect("Local", ProviderConfig.Kind.OpenAiCompat, server.url("/v1").toString(), "k", listOf(ListedModel("m")))
+            s.use(ModelRole.Main, p.id, "m", none)
+            val cfg = s.configFor(ModelRole.Main)!!
+            assertTrue(s.setModelContext(cfg.id, ModelContextSettings(readTimeoutSeconds = 1)))
+            try {
+                s.modelFor(ModelRole.Main)!!.complete("", emptyList(), emptyList())
+                fail("Expected the configured read timeout")
+            } catch (_: ModelError.Network) {
+                // 真实适配器在读取响应头时超时,而不只是 ClientSetup 里保存了一个数字。
+            }
+        }
+    }
+
+    @Test fun readTimeoutMustFitOkHttpRange() {
+        val s = store()
+        val first = connected(s)
+        s.use(ModelRole.Main, first.id, "m1", none)
+        val cfg = s.configFor(ModelRole.Main)!!
+        assertFalse(s.setModelContext(cfg.id, ModelContextSettings(readTimeoutSeconds = 0)))
+        assertFalse(s.setModelContext(cfg.id, ModelContextSettings(readTimeoutSeconds = -5)))
+        assertFalse(s.setModelContext(cfg.id, ModelContextSettings(readTimeoutSeconds = 2_147_484)))
+        assertTrue(s.setModelContext(cfg.id, ModelContextSettings(readTimeoutSeconds = 2_147_483)))
+    }
+
+    @Test fun previouslySavedOversizeReadTimeoutFallsBackWithoutLosingContextLimits() {
+        val s = store()
+        val first = connected(s)
+        s.use(ModelRole.Main, first.id, "m1", none)
+        val cfg = s.configFor(ModelRole.Main)!!
+        assertTrue(s.setModelContext(cfg.id, ModelContextSettings(1_000_000, 600_000, 600)))
+        val file = tmp.root.resolve("providers.json")
+        file.writeText(file.readText().replace("\"readTimeoutSeconds\":600", "\"readTimeoutSeconds\":2147484"))
+
+        val reloaded = store()
+        assertEquals(ModelContextSettings(1_000_000, 600_000), reloaded.provider(first.id)!!.contextSettings["m1"])
+        assertEquals(1_000_000, reloaded.modelFor(ModelRole.Main)!!.capabilities.contextTokens)
+        assertNull(setups.last().readTimeoutSeconds)
+    }
+
+    /** 预设改了默认上下文后,按旧默认存下的配置读入时跟上去;用户改过的和写了每模型窗口的不动(见 repairStaleContextDefaults)。 */
+    @Test fun stalePresetWindowIsRepairedOnLoadButUserValuesAreNot() {
+        val s = store()
+        val deepseek = s.connect("DeepSeek", ProviderConfig.Kind.OpenAiCompat, "https://api.deepseek.com", "k", listOf(ListedModel("deepseek-flash")))
+        val other = connected(s)
+        s.use(ModelRole.Main, deepseek.id, "deepseek-flash", none)
+        s.use(ModelRole.Light, other.id, "m1", none)
+        // 用户给另一条配置单独写过窗口:不动
+        assertTrue(s.setModelContext(s.configFor(ModelRole.Light)!!.id, ModelContextSettings(windowTokens = 32_000)))
+        val reloaded = store()
+        assertEquals(1_000_000, reloaded.configFor(ModelRole.Main)!!.capabilities.contextTokens)
+        // 预设默认没变的(示例地址不对应任何预设)和用户写过的都不动
+        assertEquals(64_000, reloaded.configFor(ModelRole.Light)!!.capabilities.contextTokens)
+    }
+
+    @Test fun manualTriggerUsesCoreBoundsAndASmallerReselectedWindowKeepsTheStoredValue() {
+        val s = store()
+        val p = connected(s)
+        s.use(ModelRole.Main, p.id, "m1", none.copy(contextTokens = 1_000_000))
+        val id = s.configFor(ModelRole.Main)!!.id
+        for (value in listOf(500_000, 980_000, 950_000)) {
+            assertTrue(s.setModelContext(id, ModelContextSettings(triggerTokens = value)))
+        }
+        for (value in listOf(0, 499_999, 980_001)) {
+            assertFalse(s.setModelContext(id, ModelContextSettings(triggerTokens = value)))
+        }
+        assertFalse(s.setModelContext(id, ModelContextSettings(windowTokens = -1)))
+        s.use(ModelRole.Main, p.id, "m2", none)
+        s.use(ModelRole.Main, p.id, "m1", none.copy(contextTokens = 32_000))
+        val saved = store().provider(p.id)!!.contextSettings.getValue("m1")
+        assertEquals(950_000, saved.triggerTokens)
+        assertEquals(24_000, saved.limits(s.modelFor(ModelRole.Main)!!.capabilities.contextTokens).trigger)
+    }
+
+    @Test fun missingContextFieldsUseAutoAndMalformedEntriesDoNotDiscardOtherModels() {
+        val s = store()
+        val p = connected(s)
+        s.use(ModelRole.Main, p.id, "m1", none)
+        val file = File(tmp.root, "providers.json")
+        val original = file.readText()
+        assertNull(s.modelFor(ModelRole.Main)!!.capabilities.compactionTriggerTokens)
+        val entries = """{"m1":{"windowTokens":1000000},"m2":{"triggerTokens":600000},"bad":{"triggerTokens":{}}}"""
+        file.writeText(original.replace("\"services\":[{", "\"services\":[{\"contextSettings\":$entries,"))
+        assertEquals(mapOf("m1" to ModelContextSettings(1_000_000), "m2" to ModelContextSettings(triggerTokens = 600_000)),
+            store().provider(p.id)!!.contextSettings)
+    }
+
+    @Test fun failedContextSaveLeavesBothTheStoredAndActiveModelAloneAndCanBeRetried() {
+        val s = store()
+        val p = connected(s)
+        s.use(ModelRole.Main, p.id, "m1", none)
+        val id = s.configFor(ModelRole.Main)!!.id
+        val saved = ModelContextSettings(triggerTokens = 40_000)
+        val blocked = File(tmp.root, "providers.json.tmp")
+        assertTrue(blocked.mkdir())
+        assertFalse(s.setModelContext(id, saved))
+        assertNull(s.modelFor(ModelRole.Main)!!.capabilities.compactionTriggerTokens)
+        assertTrue(blocked.delete())
+        assertNull(store().provider(p.id)!!.contextSettings["m1"])
+        assertTrue(s.setModelContext(id, saved))
+        assertEquals(saved, store().provider(p.id)!!.contextSettings["m1"])
+    }
+
     @Test
     fun freshInstallHasNoMainVisionOffAndLightSameAsMain() {
         val s = store()
@@ -83,7 +240,7 @@ class ProviderStoreTest {
     }
 
     @Test
-    fun visionSameAsMainUsesMainAndSendsImagesWithoutChangingMainItself() {
+    fun visionSameAsMainUsesMainAndMainItselfSeesUntilSwitchedAway() {
         val s = store()
         s.saveAsMain(cfg("a", vision = false), "sk-a")
         assertTrue(s.choose(ModelRole.Vision, RoleChoice.SameAsMain))
@@ -93,9 +250,59 @@ class ProviderStoreTest {
         s.modelFor(ModelRole.Vision)
         assertTrue(built.last().first.capabilities.vision)
         assertEquals("sk-a", built.last().second)
-        assertFalse("主模型自己办事仍按它存着的标记", s.configFor(ModelRole.Main)!!.capabilities.vision)
+        assertTrue("用户说了主模型能看图,主模型自己办事也直接看截图", s.configFor(ModelRole.Main)!!.capabilities.vision)
         // 重开仍在
         assertEquals(RoleChoice.SameAsMain, store().roles.value.vision)
+        assertTrue(s.choose(ModelRole.Vision, RoleChoice.Off))
+        assertFalse("换走了就回到存着的标记", s.configFor(ModelRole.Main)!!.capabilities.vision)
+    }
+
+    @Test
+    fun pickingTheMainModelAsVisionModelMakesMainSeeAndSwitchingAwayUndoesIt() {
+        val s = store()
+        val p = connected(s)
+        assertTrue(s.use(ModelRole.Main, p.id, "m1", none))
+        assertTrue(s.use(ModelRole.Vision, p.id, "m1", none))
+        assertTrue(s.configFor(ModelRole.Main)!!.capabilities.vision)
+        s.modelFor(ModelRole.Main)
+        assertTrue("建出来的主模型附图", built.last().first.capabilities.vision)
+        assertTrue(s.use(ModelRole.Vision, p.id, "m2", none))
+        assertFalse("看图换成别的模型,主模型回到列表和初值说的", s.configFor(ModelRole.Main)!!.capabilities.vision)
+        assertFalse("没改存着的配置", store().list().first { it.model == "m1" }.capabilities.vision)
+    }
+
+    @Test
+    fun userSaysModelCanSeeOverridesUnknownAndPersists() {
+        val s = store()
+        val p = connected(s)
+        assertTrue(s.use(ModelRole.Main, p.id, "m1", none))
+        assertFalse("列表没写,按初值", s.configFor(ModelRole.Main)!!.capabilities.vision)
+        assertTrue(s.setModelVision(p.id, "m1", true))
+        assertTrue(s.configFor(ModelRole.Main)!!.capabilities.vision)
+        val reopened = store()
+        assertEquals(mapOf("m1" to true), reopened.provider(p.id)!!.visionOverrides)
+        assertTrue("重开仍在", reopened.configFor(ModelRole.Main)!!.capabilities.vision)
+        // 用户也能关掉:看图用主模型时主模型也按用户说的不附图,看图这一路照旧
+        assertTrue(s.choose(ModelRole.Vision, RoleChoice.SameAsMain))
+        assertTrue(s.setModelVision(p.id, "m1", false))
+        assertFalse(s.configFor(ModelRole.Main)!!.capabilities.vision)
+        assertTrue(s.configFor(ModelRole.Vision)!!.capabilities.vision)
+        assertFalse(s.setModelVision("missing", "m1", true))
+    }
+
+    @Test
+    fun listingSaysNoVisionStaysNoUnlessTheUserOverrides() {
+        val s = store()
+        val p = s.connect("P", ProviderConfig.Kind.OpenAiCompat, "https://p.test/v1", "k", listOf(ListedModel("m1", toolCalls = true, vision = false)))
+        val o = ModelOptions.ofProvider(s.provider(p.id)!!, s.list()).single()
+        assertFalse(o.canSee)
+        assertTrue(s.use(ModelRole.Main, p.id, "m1", o.capabilities))
+        assertFalse(s.configFor(ModelRole.Main)!!.capabilities.vision)
+        assertTrue(s.setModelVision(p.id, "m1", true))
+        assertTrue(s.configFor(ModelRole.Main)!!.capabilities.vision)
+        val after = ModelOptions.ofProvider(s.provider(p.id)!!, s.list()).single()
+        assertTrue(after.canSee)
+        assertEquals(true, after.visionByUser)
     }
 
     @Test
@@ -126,8 +333,7 @@ class ProviderStoreTest {
         val vision = s.configFor(ModelRole.Vision)!!
         assertEquals("m1" to "m2", main.model to vision.model)
         assertTrue("选作主模型就记工具调用", main.capabilities.toolCalls)
-        assertTrue("选作看图就记看图", vision.capabilities.vision)
-        assertTrue(store().list().first { it.model == "m2" }.capabilities.vision)
+        assertTrue("选作看图就算能看图", vision.capabilities.vision)
         // 轻量不要求任何能力
         assertTrue(s.use(ModelRole.Light, p.id, "m2", none))
         assertEquals(vision.id, s.configFor(ModelRole.Light)?.id)
@@ -270,6 +476,64 @@ class ProviderStoreTest {
         assertEquals(emptyList<ListedModel>(), store().providers.value.single().models)
     }
 
+    // ---------- 跳过测试直接存下 ----------
+
+    /** 跳过测试存下的那家带标记;重新读文件也在(旧版本的文件没有这一项,按测过算)。 */
+    @Test
+    fun untestedProviderPersistsItsFlag() {
+        val s = store()
+        val p = s.connect("X", ProviderConfig.Kind.OpenAiCompat, "https://x.test/v1", "k", emptyList(), untested = true)
+        assertTrue(p.savedUntested)
+        assertTrue("重新读入还在", store().provider(p.id)!!.savedUntested)
+        // 不是跳过测试存下的那些没有这个标记
+        val other = s.connect("Y", ProviderConfig.Kind.OpenAiCompat, "https://y.test/v1", "k", emptyList())
+        assertFalse(other.savedUntested)
+        assertFalse(store().provider(other.id)!!.savedUntested)
+    }
+
+    /** 列过一次模型、或试通过一个模型,「没测过」就不再成立。 */
+    @Test
+    fun listingOrVerifyingClearsTheUntestedFlag() {
+        val s = store()
+        val listed = s.connect("X", ProviderConfig.Kind.OpenAiCompat, "https://x.test/v1", "k", emptyList(), untested = true)
+        s.rememberModels(listed.id, listOf(ListedModel("m1")))
+        assertFalse("列出来了就算测过", store().provider(listed.id)!!.savedUntested)
+
+        val verified = s.connect("Z", ProviderConfig.Kind.OpenAiCompat, "https://z.test/v1", "k", emptyList(), untested = true)
+        assertTrue(s.provider(verified.id)!!.savedUntested)
+        s.markVerified(verified.id, "m1")
+        assertFalse("核实过就算测过", s.provider(verified.id)!!.savedUntested)
+        assertEquals(setOf("m1"), s.provider(verified.id)!!.verifiedModels)
+    }
+
+    /** 主模型在它那家还没测试通过(没有列表、手填、没核实)时给出那一家;核实过、或这家有列表时不算。 */
+    @Test
+    fun untestedMainProviderFollowsTheMainModel() {
+        val s = store()
+        assertNull("没有主模型", s.untestedMainProvider())
+        val p = s.connect("X", ProviderConfig.Kind.OpenAiCompat, "https://x.test/v1", "k", emptyList(), untested = true)
+        s.markTyped(p.id, "m1")
+        s.use(ModelRole.Main, p.id, "m1", none)
+        assertEquals(p.id, s.untestedMainProvider()?.id)
+        s.markVerified(p.id, "m1")
+        assertNull("试通过了", s.untestedMainProvider())
+        val listed = s.connect("Y", ProviderConfig.Kind.OpenAiCompat, "https://y.test/v1", "k", listOf(ListedModel("m2")))
+        s.use(ModelRole.Main, listed.id, "m2", none)
+        assertNull("从列表里选的不算", s.untestedMainProvider())
+    }
+
+    /** 跳过测试再存一次已经列过模型的那家:已有的列表留着,不要被空表盖掉,也仍然是「测过」。 */
+    @Test
+    fun savingUntestedAgainKeepsAnExistingModelList() {
+        val s = store()
+        val p = s.connect("X", ProviderConfig.Kind.OpenAiCompat, "https://x.test/v1", "k", listOf(ListedModel("m1")))
+        val again = s.connect("X", ProviderConfig.Kind.OpenAiCompat, "https://x.test/v1", "k2", emptyList(), untested = true)
+        assertEquals(p.id, again.id)
+        assertEquals(listOf("m1"), again.models!!.map { it.id })
+        assertFalse("已经列过列表的不算没测过", again.savedUntested)
+        assertEquals("k2", s.providerKey(p.id))
+    }
+
     @Test
     fun modelsOfOneProviderShareOneKey() {
         val s = store()
@@ -293,10 +557,10 @@ class ProviderStoreTest {
     }
 
     @Test
-    fun configsPublishedAsFlow() {
+    fun configsExposeCurrentList() {
         val s = store()
         s.saveAsMain(cfg("a"), "sk-a")
-        assertSame(s.list(), s.configs.value)
+        assertEquals(s.list(), s.configs.value)
         assertEquals(1, s.configs.value.size)
     }
 
@@ -471,6 +735,10 @@ class ProviderStoreTest {
         val r = RoleChoices(main = "a", vision = RoleChoice.SameAsMain, light = RoleChoice.Model("b"))
         assertEquals("a", r.resolve(ModelRole.Vision))
         assertEquals("b", r.resolve(ModelRole.Light))
+        assertFalse(r.sameModel(ModelRole.Main, ModelRole.Light))
+        assertTrue(r.sameModel(ModelRole.Main, ModelRole.Vision))
+        assertTrue(RoleChoices(main = "a").sameModel(ModelRole.Main, ModelRole.Light))
+        assertFalse(RoleChoices().sameModel(ModelRole.Main, ModelRole.Light))
         assertEquals(setOf("a", "b"), r.referenced)
         assertNull(RoleChoices().resolve(ModelRole.Light))
         assertNull(r.with(ModelRole.Light, RoleChoice.Off))

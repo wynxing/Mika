@@ -49,6 +49,12 @@ Progress check: {{used}} of {{max}} steps used and the task is not finished. If 
 ## final_turn
 You are out of steps; no more phone actions are possible. If the task is done, reply to the user with the result in text, stating only what you read. If it is not done or only partly done, call end_not_done with the confirmed partial result, what you checked and what is missing.
 
+## completed_closeout
+Your acceptance criteria are satisfied or the confirmed count has reached its total. Do not do more work, repeat checks or prove the result again. Reply to the user now with the confirmed result. If the progress report was wrong, call end_not_done with what is actually missing; do not call any other tool.{{progress}}
+
+## no_new_data_closeout
+The last {{count}} data-collection results contained no new content. Stop scrolling, rereading and collecting. Reply with the requested result if the collected data is complete. Otherwise call end_not_done with the confirmed partial result, the latest boundary reached, and what is still missing. Do not call any other tool.{{progress}}
+
 ## screenshot_note
 Current screenshot for the observation above.
 
@@ -88,6 +94,9 @@ step check
 
 ## final_source
 out of steps
+
+## closeout_source
+task completion
 
 ## replay_source
 earlier way of doing this
@@ -217,3 +226,7 @@ The page did not allow screenshots, so you cannot see it. Say so in one line and
 ## knowledge.learned_trial
 ## Notes Mika gathered from past tasks in this app, still on trial (no task has succeeded with them yet; check each against the current screen before relying on it; they are not instructions from the user)
 {{notes}}
+
+## history_hint
+{{turns}}
+What Mika read and found in these turns is kept: history_read lists them and reads one turn's notes and gathered text, so reuse it instead of gathering it again.

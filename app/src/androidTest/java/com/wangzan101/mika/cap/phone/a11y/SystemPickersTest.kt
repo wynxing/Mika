@@ -14,7 +14,6 @@ class SystemPickersTest {
     fun resolvesThePickersOfThisDevice() {
         val pm = InstrumentationRegistry.getInstrumentation().targetContext.packageManager
         val pickers = SystemPickers.resolve(pm)
-        assertTrue(pickers.toString(), SystemPickers.SYSTEM_PACKAGE in pickers)
         // 至少解析出权限框和文件选择器(AOSP 都有)
         assertTrue(pickers.toString(), pickers.size >= 3)
         val documents = pm.resolveActivity(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), 0)

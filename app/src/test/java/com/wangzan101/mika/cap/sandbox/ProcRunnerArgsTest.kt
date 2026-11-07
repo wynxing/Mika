@@ -48,6 +48,17 @@ class ProcRunnerArgsTest {
         assertEquals("mika-bridge-x", bridged["MIKA_BRIDGE"]); assertEquals("tok", bridged["MIKA_TOKEN"])
     }
 
+    /** 代理只在给了时出现:大小写两套变量都给(有的工具只认大写),本机地址照旧直连。 */
+    @Test fun proxyIsPassedOnlyWhenGiven() {
+        val none = ProcRunner.env(dirs, null, null, "conv1", proxy = "")
+        assertTrue(none.keys.none { it.lowercase().endsWith("_proxy") })
+        val p = "http://u:pw@10.0.0.2:8080"
+        val env = ProcRunner.env(dirs, null, null, "conv1", proxy = p)
+        for (k in listOf("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")) assertEquals(k, p, env[k])
+        assertEquals(ProcRunner.NO_PROXY, env["no_proxy"])
+        assertEquals(ProcRunner.NO_PROXY, env["NO_PROXY"])
+    }
+
     @Test fun envReadsPhoneTimezoneForEveryCommand() {
         val original = TimeZone.getDefault()
         try {

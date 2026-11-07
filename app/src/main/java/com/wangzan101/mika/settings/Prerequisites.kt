@@ -33,12 +33,18 @@ data class SystemStatus(
     val wirelessDebugging: Boolean = false,
     /** 系统里根本没有「无线调试」这一项(没带这个功能):引导页据此给「改用电脑启动」。 */
     val wirelessDebuggingMissing: Boolean = false,
+    /** 系统里打不开「开发者选项」页:和 [wirelessDebuggingMissing] 一起成立时,这个环境设置不了手机操作。 */
+    val developerSettingsMissing: Boolean = false,
     /** 系统「USB 调试」开着:开着时 Wi-Fi 断开助手也不停。 */
     val usbDebugging: Boolean = true,
+    /** 用户打开了「用 root 启动手机助手」且此刻能用:看门狗经 su 起助手(不靠 Wi-Fi 和无线调试)。 */
+    val rootStart: Boolean = false,
     /** 系统可能拦着不让打开无障碍(安卓 13 起,没从应用商店装的 App 要先允许受限制的设置)。 */
     val restrictedSettings: Boolean = false,
     /** 助手停了以后靠什么再起来:只用 USB 启动命令起过时,各处都不往无线调试引,说清要再运行命令。 */
     val helperRestart: HelperRestart = HelperRestart.None,
+    /** 开机后用户还没解锁过一次([android.os.UserManager.isUserUnlocked] 为假):无障碍服务这时本来就绑不上。 */
+    val userLocked: Boolean = false,
 )
 
 fun SystemStatus.notificationOverview() = NotificationOverview.of(
@@ -50,7 +56,8 @@ sealed interface Problem {
     data object SystemTooOld : Problem
     /** 内置助手没在运行(没设置、无线调试关着、正在连、出错)。 */
     data class PhoneHelper(val status: BuiltinShellStatus) : Problem
-    data class Accessibility(val state: AccessibilityState) : Problem
+    /** [userLocked] 为真时没在运行是因为开机后还没解锁过;[restrictedSettings] 为真时系统可能阻止绑定。 */
+    data class Accessibility(val state: AccessibilityState, val userLocked: Boolean = false, val restrictedSettings: Boolean = false) : Problem
     data object NoModel : Problem
     /** 不挡任务,只是看不到进度和「需要你」提醒。 */
     data object NotificationsOff : Problem
@@ -85,7 +92,9 @@ object Prerequisites {
             if (status.sdkInt >= MIN_SDK && status.builtinShell != BuiltinShellStatus.Running) {
                 add(Problem.PhoneHelper(status.builtinShell))
             }
-            if (status.sdkInt >= MIN_SDK && status.accessibility != AccessibilityState.On) add(Problem.Accessibility(status.accessibility))
+            if (status.sdkInt >= MIN_SDK && status.accessibility != AccessibilityState.On) {
+                add(Problem.Accessibility(status.accessibility, status.userLocked, status.restrictedSettings))
+            }
             if (!hasMainModel) add(Problem.NoModel)
             if (!status.notificationsAllowed) add(Problem.NotificationsOff)
             else if (status.attentionLowered || status.resultLowered) add(Problem.AttentionLowered(status.attentionLowered, status.resultLowered))

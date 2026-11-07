@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="appaccess_title">應用程式存取</string>
+    <string name="appaccess_row_sub">按應用程式設定禁用和螢幕分享許可</string>
+    <string name="appaccess_intro">選擇允許 Mika 透過標準手機工具讀取和操作的應用程式。Shell 命令、沙箱和電腦連接（MCP）不受此設定限制。</string>
+    <string name="appaccess_privacy">分類會把應用程式名稱和套件名稱傳給 AI 模型；點「重新整理應用程式清單」時會先詢問你。</string>
+    <string name="appaccess_unavailable">應用程式存取設定無法讀取，標準手機存取已暫停。重設會清掉已儲存的權限和分類。</string>
+    <string name="appaccess_reset">重設應用程式存取</string>
+    <string name="appaccess_search">搜尋名稱或套件名稱</string>
+    <string name="appaccess_refreshing">正在分類…</string>
+    <string name="appaccess_refresh">重新整理應用程式清單</string>
+    <string name="appaccess_recommend">建議禁用</string>
+    <string name="appaccess_recommend_count">建議禁用 · %1$d</string>
+    <string name="appaccess_allow_all">全部允許</string>
+    <string name="appaccess_risk_note">自動操作這類應用程式可能造成帳號限制，用不到就禁用。</string>
+    <string name="appaccess_blocked">已禁用</string>
+    <string name="appaccess_allowed">允許</string>
+    <string name="appaccess_revoke_share">撤銷 %1$s 的螢幕分享許可</string>
+
+    <string name="appaccess_send_title">把應用程式清單傳給 AI？</string>
+    <string name="appaccess_send_body">重新整理會讀取已安裝的應用程式，並把應用程式名稱和套件名稱傳給你設定的 AI 模型，用來判斷風險分類。應用程式裡的內容不會被傳送。</string>
+    <string name="appaccess_send_confirm">繼續並分類</string>
+    <string name="appaccess_cancel">取消</string>
+
+    <string name="appaccess_recommend_title">建議禁用金融交易應用程式</string>
+    <string name="appaccess_recommend_body">這些應用程式會被辨識為金融交易類，而 Mika 現在仍能自動操作它們。可以逐個禁用，或一次全部禁用。</string>
+    <string name="appaccess_recommend_empty">沒有需要禁用的應用程式。</string>
+    <string name="appaccess_block">禁用</string>
+    <string name="appaccess_block_all">全部禁用</string>
+
+    <string name="appaccess_edit_category">修改分類</string>
+    <string name="appaccess_category_manual">使用者選擇</string>
+
+    <string name="appaccess_error_save">儲存失敗</string>
+    <string name="appaccess_error_no_model">沒有可用的模型，應用程式清單已重新整理，但無法分類。</string>
+    <string name="appaccess_error_refresh">重新整理失敗</string>
+    <string name="appaccess_error_load">讀取應用程式清單失敗</string>
+
+    <string name="appaccess_category_finance">金融交易</string>
+    <string name="appaccess_category_social">社交通訊</string>
+    <string name="appaccess_category_game">遊戲</string>
+    <string name="appaccess_category_shopping">購物生活</string>
+    <string name="appaccess_category_productivity">辦公工具</string>
+    <string name="appaccess_category_media">影音內容</string>
+    <string name="appaccess_category_other">其他</string>
+    <string name="appaccess_category_unknown">未分類</string>
+
+    <string name="appaccess_share_title">分享 %1$s 的螢幕</string>
+    <string name="appaccess_share_body">此應用程式已禁用。螢幕分享許可只用於你主動分享，自動讀取和操作仍然禁止。</string>
+    <string name="appaccess_share_allow">允許僅分享螢幕</string>
+    <string name="appaccess_share_unblock">允許此應用程式</string>
+    <string name="appaccess_share_cancel">取消分享</string>
+    <string name="appaccess_share_expired">螢幕分享許可已失效，請重新截圖</string>
+</resources>

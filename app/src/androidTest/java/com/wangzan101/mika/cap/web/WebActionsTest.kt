@@ -277,6 +277,7 @@ class WebActionsTest {
         val before = topResumed()
         val imeBefore = imeShown()
         assertNotNull(before)
+        assertNotNull("mInputShown not found in dumpsys input_method", imeBefore)
         open("inputs.html")
         val s = screen.snapshot()
         screen.tapRef(s.ref("#counter"), s.snapshotId)

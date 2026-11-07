@@ -9,8 +9,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ConversationTest {
-    private fun text(turns: List<Turn>, maxTurns: Int = 5, maxChars: Int = 4000) =
-        (Conversation.context(turns, maxTurns, maxChars)!!.parts.single() as Part.Text).text
+    private fun text(turns: List<Turn>, maxTurns: Int = 5, maxTokens: Int = 2_500) =
+        (Conversation.context(turns, maxTurns, maxTokens)!!.parts.single() as Part.Text).text
 
     @Test fun noTurnsNoMessage() {
         assertNull(Conversation.context(emptyList()))
@@ -25,11 +25,14 @@ class ConversationTest {
         assertTrue(t.indexOf("问题6") < t.indexOf("问题7") && t.indexOf("问题7") < t.indexOf("问题8"))
         // 超长时丢掉较早的,保留最近的
         val long = (1..5).map { Turn("问题$it", "长".repeat(300), "succeeded") }
-        val capped = text(long, maxChars = 800)
-        assertTrue(capped.length <= 800)
+        val capped = text(long, maxTokens = 600)
+        assertTrue(TokenEstimate.of(capped) <= 600)
         assertTrue("问题5" in capped && "问题1" !in capped)
         // 单轮就超长:截断而不是超出
-        assertTrue(text(listOf(Turn("问", "长".repeat(5000), "succeeded")), maxChars = 500).length <= 500)
+        assertTrue(TokenEstimate.of(text(listOf(Turn("问", "长".repeat(5000), "succeeded")), maxTokens = 300)) <= 300)
+        // 各字段分别截:原话很长时结局也还在
+        val both = text(listOf(Turn("问".repeat(2000), "长".repeat(5000), "succeeded")), maxTokens = 300)
+        assertTrue(both, TokenEstimate.of(both) <= 300 && "The user said: 问问" in both && "result: 长长" in both)
     }
 
     @Test fun keptPageSaysWhetherItIsStillOpen() {

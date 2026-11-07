@@ -36,6 +36,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.ZoneOffset
@@ -148,6 +149,7 @@ class LoopScenarioTest {
         val end = loop(main, toolDispatcher(screen)).run("点搜索")
         assertTrue("$end", end is TaskState.Succeeded)
         assertTrue("ref_expired" in main.lastResult(2))
+        assertTrue(main.lastResult(2), "\"cause\":\"element_lost\"" in main.lastResult(2))
         snapshot("d_ref_expired", end, "main" to main)
     }
 
@@ -401,6 +403,43 @@ class LoopScenarioTest {
         assertTrue(hint, "latest message: \"$quoted\"" in hint)
     }
 
+    // 引了 Mika 之前的一段英文回答、再打一句短中文:按整句算会判成换了语言;引的那段不算用户的话,语言提示引打的字,中文回答不退回
+    @Test fun quotedReplyFollowsTheUserWords() = runTest {
+        val goal = QuoteMessage.compose(QuoteMessage.Quote(QuoteMessage.From.Mika, ENGLISH_REPLY), "那哪个更值")
+        assertNotNull(ReplyLanguage.mismatch(goal, HEADPHONES_ANSWER))
+        val main = fakeModel("main") { answer(HEADPHONES_ANSWER) }
+        val end = loop(main, toolDispatcher(FakeScreen())).run(goal)
+        assertEquals(HEADPHONES_ANSWER, (end as TaskState.Succeeded).answer)
+        assertEquals(1, main.requests.size)
+        val hint = main.requests[0].messages.runtimeState()
+        assertTrue(hint, "latest message: \"那哪个更值\"" in hint)
+    }
+
+    // 插话里引了那段英文回答:一样只看插话里打的字
+    @Test fun quotedSteerFollowsTheUserWords() = runTest {
+        val steer = QuoteMessage.compose(QuoteMessage.Quote(QuoteMessage.From.Mika, ENGLISH_REPLY), "那哪个更值")
+        assertNotNull(ReplyLanguage.mismatch(steer, HEADPHONES_ANSWER))
+        val main = fakeModel("main") { answer(HEADPHONES_ANSWER) }
+        val inbox = RunInbox().apply { send(RunInput.Steer("m1", steer)) }
+        val end = loop(main, toolDispatcher(FakeScreen())).run(RunSpec(RunId("r1"), "帮我比较一下这两款降噪耳机", "thread-1"), inbox)
+        assertEquals(HEADPHONES_ANSWER, (end as TaskState.Succeeded).answer)
+        assertEquals(1, main.requests.size)
+        val hint = main.requests[0].messages.runtimeState()
+        assertTrue(hint, "latest message: \"那哪个更值\"" in hint)
+    }
+
+    // 话很短、附件名是长英文:按整句算会判成换了语言;附件那几行不算用户的话,中文回答不退回
+    @Test fun attachedFileFollowsTheUserWords() = runTest {
+        val goal = AttachmentLines.compose("总结一下", listOf("/workspace/inbox/Quarterly_Financial_Report_Final_v2.pdf" to "2 KB"))
+        assertNotNull(ReplyLanguage.mismatch(goal, REPORT_ANSWER))
+        val main = fakeModel("main") { answer(REPORT_ANSWER) }
+        val end = loop(main, toolDispatcher(FakeScreen())).run(goal)
+        assertEquals(REPORT_ANSWER, (end as TaskState.Succeeded).answer)
+        assertEquals(1, main.requests.size)
+        val hint = main.requests[0].messages.runtimeState()
+        assertTrue(hint, "latest message: \"总结一下\"" in hint)
+    }
+
     // (o) 工具调用漏成了文字(服务端没解析成调用):不当回答,退回一次;模型经工具接口重新调用后照常做完
     @Test fun toolCallLeakedAsTextIsNudgedOnce() = runTest {
         val screen = ScriptedScreen(listOf(Screen(SETTINGS, listOf(label("@e1", "关于手机", 80), label("@e2", "Android 版本 14", 300)))))
@@ -486,6 +525,10 @@ class LoopScenarioTest {
     private companion object {
         const val LEAKED_OBSERVE = "<tool_call>\n<function=phone_observe>\n</function>\n</tool_call>"
         const val ANDROID_14 = "这台手机的安卓版本是 14,是在关于手机页面上看到的。"
+        const val ENGLISH_REPLY = "The first pair costs 399 dollars and has the best noise cancelling. " +
+            "The second pair costs 429 dollars and is more comfortable on long flights."
+        const val HEADPHONES_ANSWER = "看你更在意什么:第一副便宜 30 美元,降噪更好;第二副戴久了更舒服,适合长途飞行。只看性价比的话选第一副。"
+        const val REPORT_ANSWER = "这份季度报告的要点有三条:收入比上个季度略有增长,成本控制得不错,下个季度的重点是扩大海外市场。"
         const val CHINESE_ANSWER = "我打开了关于手机页面看过了：这台手机的安卓版本是 14，存储已使用 250.53 GB，总共 512 GB，两个数字都是页面上显示的。"
         const val CLOCK = 1_761_300_000_000L
         const val SETTINGS = "com.android.settings"

@@ -22,6 +22,9 @@
     <string name="voice_busy">Speech recognition is busy. Try again in a moment</string>
     <string name="voice_network">No network, couldn’t turn it into text</string>
     <string name="voice_mic_unavailable">The microphone isn’t available. Another app may be using it</string>
+    <string name="voice_hold_to_talk">Hold to talk</string>
+    <string name="voice_mic_blocked_title">The microphone still isn’t available</string>
+    <string name="voice_mic_blocked_body">Recording is already allowed, but Mika still can’t record. Check that the microphone access switch in Quick Settings is on (Android 12 and later), and that Mika’s microphone isn’t turned off in the system’s permission manager. Another app may also be using the microphone.</string>
     <string name="voice_provider_failed">Couldn’t turn it into text: %1$s</string>
     <string name="voice_unavailable_title">Voice input isn’t ready</string>
     <string name="voice_unavailable_no_engine">This phone has no built-in speech recognition, and no speech-to-text model has been picked. Pick a provider’s speech model in Settings › Models › Speech to text and it will work.</string>

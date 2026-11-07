@@ -10,6 +10,7 @@ import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.net.Uri
 import android.webkit.GeolocationPermissions
+import android.webkit.HttpAuthHandler
 import android.webkit.JsPromptResult
 import android.webkit.JsResult
 import android.webkit.ValueCallback
@@ -102,6 +103,8 @@ class WebTab(
 
     // 弹出的标签已经在同站页面上开始加载过:之后再要去别的网站只拦下那次导航,不再关标签
     private var popupCommitted = false
+    /** 当前主文档的代理认证重试额度(只在主线程上动)。 */
+    private val proxyAuth = WebProxyAuth()
 
     /** 主文档是否正在加载。只在主线程读写。 */
     var loading: Boolean = false
@@ -200,6 +203,7 @@ class WebTab(
                     v.stopLoading()
                     return
                 }
+                proxyAuth.onPageStarted()
                 loading = true
                 armed = true
                 mainFrameFailed = false
@@ -238,6 +242,17 @@ class WebTab(
                     httpErrorStatus = response.statusCode
                     mainFrameFailed = true
                 }
+            }
+
+            // 网络代理要账号密码:只回答设置 › 网络代理 里那个 HTTP 代理,答过几次还在问(账号密码不对)就不再答;
+            // 网站自己的登录框不在这里填
+            override fun onReceivedHttpAuthRequest(v: WebView, handler: HttpAuthHandler, host: String?, realm: String?) {
+                val credentials = proxyAuth.credentialsFor(host)
+                if (credentials == null) {
+                    handler.cancel()
+                    return
+                }
+                handler.proceed(credentials.first, credentials.second)
             }
 
             // 证书有问题一律不继续

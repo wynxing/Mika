@@ -16,7 +16,6 @@ import okio.Buffer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -178,8 +177,6 @@ class WebDownloadsTest {
     @Test
     fun onlyWebAddressesAreFetched() {
         val d = downloads()
-        val info = d.list().firstOrNull()
-        assertNull(info)
         val path = d.start("file:///etc/passwd", "UA", null, null, null)
         assertEquals("failed", d.list().single { it.file == path }.status)
         assertTrue(cookieCalls.isEmpty())

@@ -4,7 +4,6 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasAnyAncestor
-import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
@@ -12,8 +11,6 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
-import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performScrollToKey
 import androidx.test.platform.app.InstrumentationRegistry
 import com.wangzan101.mika.R
 import com.wangzan101.mika.i18n.AppLanguage
@@ -31,20 +28,6 @@ internal fun ComposeContentTestRule.awaitOne(text: String, inDialog: Boolean = f
 /** 弹窗里的按钮:等弹窗出现再点。 */
 internal fun ComposeContentTestRule.clickInDialog(text: String) {
     awaitOne(text, inDialog = true).performClick()
-    waitForIdle()
-}
-
-/** 懒列表里先按稳定的分组 key 跳转，再把组内目标行移进视口；不会划过中间开关。 */
-internal fun ComposeContentTestRule.scrollToItem(key: Any, text: String) {
-    onNode(hasScrollAction()).performScrollToKey(key)
-    waitForIdle()
-    awaitOne(text).performScrollTo()
-    waitForIdle()
-}
-
-internal fun ComposeContentTestRule.scrollAndClick(key: Any, text: String) {
-    scrollToItem(key, text)
-    awaitOne(text).performClick()
     waitForIdle()
 }
 

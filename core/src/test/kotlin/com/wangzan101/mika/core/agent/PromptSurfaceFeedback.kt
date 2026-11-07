@@ -93,6 +93,7 @@ internal object PromptSurfaceFeedback {
             "blank no window" to ScreenCheck(ScreenState.BLANK, null, false, cause = ScreenDiagnosis.NO_WINDOW),
             "loading" to ScreenCheck(ScreenState.LOADING, "com.x", false),
             "protected" to ScreenCheck(ScreenState.PROTECTED, "com.x", false),
+            "capture unavailable" to ScreenCheck(ScreenState.CAPTURE_UNAVAILABLE, "com.x", true, takeoverReason = ScreenDiagnosis.DISPLAY_CAPTURE),
             "needs human" to ScreenCheck(ScreenState.NEEDS_HUMAN, "com.x", true, takeoverReason = "login"),
             "unsupported browser" to ScreenCheck(ScreenState.NORMAL, "com.x", false, takeoverReason = ScreenDiagnosis.UNSUPPORTED_BROWSER),
         )) add("phone_diagnose $label", toolDispatcher(Checked(c)), "phone_diagnose")
@@ -132,6 +133,14 @@ internal object PromptSurfaceFeedback {
         add("skill save missing section", withSkills, "skill_save",
             """{"markdown":"---\nname: order-coffee\ndisplay: 点咖啡\ndescription: 点咖啡时用\n---\n## 入口\n打开 App","quote":"帮我建一个技能"}""")
 
+        val withHistory = toolDispatcher(FakeScreen(), runSpec = com.wangzan101.mika.core.run.RunSpec(com.wangzan101.mika.core.run.RunId("t"), "t", "thread",
+            priorTurns = listOf(Turn("之前", "好", "succeeded", runId = "r1"))), runRecords = object : com.wangzan101.mika.core.record.RunRecords {
+                override suspend fun summary(runId: String): com.wangzan101.mika.core.record.RunSummary? = null
+                override suspend fun events(runId: String) = emptyList<com.wangzan101.mika.core.record.RunEvent>()
+            })
+        add("history turn not found", withHistory, "history_read", """{"turn":5}""")
+        add("history not recorded", withHistory, "history_read", """{"turn":1}""")
+
         val notReady = toolDispatcher(FakeScreen(), sandbox = FakeSandbox(SandboxStatus.NotInstalled), workspace = { "w" })
         add("sandbox not ready", notReady, "run_command", """{"command":"ls"}""")
 
@@ -155,6 +164,8 @@ internal object PromptSurfaceFeedback {
         val leaked = TurnPolicy.leakedToolCall("ask_user")
         val progress = TurnPolicy.beforeStep(TurnSnapshot(11, 20))!!
         val final = TurnPolicy.finalTurn()
+        val completed = TurnPolicy.closeout(Closeout.Completed)
+        val noNewData = TurnPolicy.closeout(Closeout.NoNewData, RunProgress.Task("已收集", 12, null, "2026-10-31"))
         val stuck = GuardVerdict("no_progress", Severity.Warn, JsonObject(emptyMap()))
         val giveUp = StuckAdvice.next(StuckState(warnings = 1), StuckInput(listOf(stuck), null, null)).second!!
         val typedAgain = StuckAdvice.next(StuckState(typed = mapOf("null\u0000外卖" to 2)), StuckInput(listOf(stuck), "外卖", null)).second!!
@@ -169,6 +180,8 @@ internal object PromptSurfaceFeedback {
             "repeated_input_advice" to typedAgain,
             "progress_check" to progress.text,
             "final_turn" to final.text,
+            "completed_closeout" to completed.text,
+            "no_new_data_closeout" to noNewData.text,
             "screenshot_note" to NoticePolicy.imageNote(Verb.Screenshot, offScreen = false),
             "file_image_note" to NoticePolicy.imageNote(Verb.ReadFile, offScreen = true),
             "action_frame_note" to NoticePolicy.imageNote(Verb.Tap, offScreen = false),
@@ -180,6 +193,7 @@ internal object PromptSurfaceFeedback {
             "leaked_call_source" to leaked.source,
             "progress_source" to progress.source,
             "final_source" to final.source,
+            "closeout_source" to completed.source,
             "replay_source" to fileCall("RouteReplayKt", "getREPLAY_SOURCE"),
             "approved_step_first" to AgentLoop.APPROVED_STEP_FIRST,
             "replay_screen_header" to fileCall("RouteReplayKt", "getREPLAY_SCREEN_HEADER"),

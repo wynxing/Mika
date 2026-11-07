@@ -37,7 +37,7 @@
     <string name="mcp_cli_install">1. Set up your computer</string>
     <string name="mcp_cli_install_sub">Send the install guide to your computer AI, or follow it on the computer yourself.</string>
     <string name="mcp_copy_install">Copy install guide</string>
-    <string name="mcp_cli_install_prompt">Follow https://github.com/wangzan101/Mika/blob/main/docs/cli.en.md to install Mika CLI or the Skill for this agent. Use the connection method selected on the phone: USB uses authorized ADB; Wi-Fi/private VPN uses the HTTP address and a private token file. Run connect to verify the connection. With only the Skill, use its bundled script. Do not submit phone tasks or print tokens in the conversation.</string>
+    <string name="mcp_cli_install_prompt">Follow https://github.com/wangzan101/Mika/blob/main/docs/agent-quickstart.en.md to install Mika CLI or the Skill for this agent. Use the connection method selected on the phone: USB uses authorized ADB; Wi-Fi/private VPN uses the HTTP address and a private token file. Run connect to verify the connection. With only the Skill, use its bundled script. Do not submit phone tasks or print tokens in the conversation.</string>
     <string name="mcp_cli_connect">2. Connect the phone</string>
     <string name="mcp_cli_connect_sub">Run on your computer over USB or paired wireless debugging. connect verifies the connection. With only the Skill, ask the agent to run its bundled client.</string>
     <string name="mcp_copy_command">Copy command</string>
@@ -63,4 +63,6 @@
     <string name="mcp_cli_network_sub">Save the token in a private file on the computer, then replace /path/to/token in the command with that path. With only the Skill, ask the agent to use its bundled client.</string>
     <string name="mcp_copy_token">Copy token</string>
     <string name="mcp_cli_connection_check">connect verifies the connection. A successful request updates the time above.</string>
+    <string name="mcp_history_title">Allow computers to view history</string>
+    <string name="mcp_history_detail">Connected computers can read all conversations, run records and recorded Trace bodies, including redacted model requests and replies. Applies to USB and private-network connections.</string>
 </resources>

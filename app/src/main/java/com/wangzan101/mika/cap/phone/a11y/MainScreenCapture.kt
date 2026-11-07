@@ -34,6 +34,15 @@ internal object MainScreenCapture {
         data object Unavailable : Result
     }
 
+    /** 只查看窗口根的归属,不遍历文本;有未知归属时拒绝分享。 */
+    fun sourcePackages(service: ScreenAccessibility): Set<String>? {
+        val windows = service.windowsOn(Display.DEFAULT_DISPLAY).filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+        if (windows.isEmpty()) return null
+        val packages = windows.map { it.root?.packageName?.toString() }
+        if (packages.any { it.isNullOrBlank() }) return null
+        return packages.filterNotNull().toSet()
+    }
+
     /** 截图(调用方已把浮层藏好)。读树要在截图的同一时刻:截完马上读。 */
     suspend fun shoot(service: ScreenAccessibility): Pair<ScreenAccessibility.MainShot, ScreenRead?> {
         val shot = service.takeMainScreenshot()

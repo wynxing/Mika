@@ -58,12 +58,12 @@ class SystemActionToolsTest {
     }
 
     @Test fun unreadableOrMissingAlarmAsksForOneCheck() = runTest {
-        for (res in listOf(
-            SystemActionResult(ActionResult.Ok(), "com.example.clock", alarmReadable = false),
-            SystemActionResult(ActionResult.Ok(), "com.example.clock", alarmReadable = true, nextAlarmAfter = null),
+        for ((res, check) in listOf(
+            SystemActionResult(ActionResult.Ok(), "com.example.clock", alarmReadable = false) to "unknown",
+            SystemActionResult(ActionResult.Ok(), "com.example.clock", alarmReadable = true, nextAlarmAfter = null) to "not_seen",
         )) {
             val r = toolDispatcher(SystemScreen { res }).execute(call("phone_set_alarm", """{"hour":7,"minute":0}""")).content
-            assertTrue(r.s("check") in setOf("unknown", "not_seen"))
+            assertEquals(check, r.s("check"))
             assertEquals(Feedback["alarm.unconfirmed"], r.s("hint"))
         }
     }

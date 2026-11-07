@@ -30,7 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.wangzan101.mika.ui.components.MikaDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
@@ -157,6 +157,11 @@ fun PhoneSetupScreen(status: SystemStatus, repair: Boolean, onFix: (Fix) -> Unit
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
         if (view.current == SetupStep.PairingCode) pairing.begin()
     }
+    // 走到配对一步后无障碍被系统断开:不退回无障碍一步,
+    // 和跳过一样留在配对一步、改说在通知里填;又连上了照样自己读
+    LaunchedEffect(view.current) {
+        if (view.current == SetupStep.PairingCode) accessibilitySkipped = true
+    }
     val notificationsOff = view.notifyIssue == PairingNotifyIssue.NotificationsOff
     LaunchedEffect(notificationsOff) {
         if (notificationsOff && !askedNotifications) {
@@ -173,7 +178,12 @@ fun PhoneSetupScreen(status: SystemStatus, repair: Boolean, onFix: (Fix) -> Unit
         context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(PhoneSetupCopy.USB_TITLE, usbCommand))
         Toast.makeText(context, PhoneSetupCopy.USB_COPIED, Toast.LENGTH_SHORT).show()
     }
-    val close = { pairing.cancelRepair(); onClose() }
+    // 没配好就不设置了:撤掉配对通知、不再找配对窗口(填码通知一到配对一步就放进通知栏,不撤会挂着;end 也结束重新配对)。
+    // 正在配对、连接时让它做完,配好了留着「配对成功」
+    val close = {
+        if (view.phase == SetupPhase.Guide || view.phase == SetupPhase.Failed) pairing.end() else pairing.cancelRepair()
+        onClose()
+    }
     BackHandler(onBack = close)
     PhoneSetupContent(
         view = view,
@@ -235,6 +245,7 @@ fun PhoneSetupScreen(status: SystemStatus, repair: Boolean, onFix: (Fix) -> Unit
  * [scanning] 为真时连接一步说明正在本机找端口;连不上时 [onConnectPort] 收用户填的无线调试端口(已校验 1–65535)。
  * [usbCommand] 不为空时才有「改用电脑启动」:平时不出现,只在无线调试一步有一行「找不到无线调试?」([onAskUsb]);
  * [SetupView.usbFallback] 为真时,在当前这一步里给一张卡片,是一句说明、命令和复制按钮([onCopyUsbCommand])。
+ * [SetupPhase.Unavailable] 时这个环境设置不了手机操作:只有一张说明卡片和「知道了」,不列步骤。
  */
 @Composable
 fun PhoneSetupContent(
@@ -267,38 +278,51 @@ fun PhoneSetupContent(
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars)) {
             TopBar(PhoneSetupCopy.BAR_TITLE, MikaIcons.Back, onClose, stringResource(R.string.back))
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
-                if (view.phase == SetupPhase.Success) {
-                    Text(
-                        PhoneSetupCopy.SUCCESS_LINE, Modifier.padding(top = 4.dp, bottom = 16.dp).testTag("setup-success"),
-                        style = MikaType.Body, fontWeight = FontWeight.SemiBold, color = c.ok,
-                    )
-                } else {
-                    Text(
-                        PhoneSetupCopy.INTRO, Modifier.padding(top = 4.dp, bottom = 16.dp),
-                        fontSize = 14.5.sp, lineHeight = 23.sp, color = c.ink2,
-                    )
-                }
-                GroupCard {
-                    SetupStep.entries.forEach { step ->
-                        StepRow(
-                            step, view.marks.getValue(step), current = step == view.current, first = step.ordinal == 0,
-                            onClick = if (revisitable(step)) ({ onRevisit(step) }) else null,
-                        ) {
-                            if (step == view.current) CurrentStepBody(
-                                step, view, onStepAction, onFailureFix, onAllowNotifications, onOpenPairingChannel, headsUpLowered, onOpenHeadsUp,
-                                onConfirmStep, onSubmit, onAppInfo, onSkipAccessibility, onRevisit, onDiagnostics, onConnectPort,
+                if (view.phase == SetupPhase.Unavailable) {
+                    // 这个环境没有能起助手的路:只说明,不列走不通的步骤
+                    GroupCard {
+                        Column(Modifier.padding(16.dp).testTag("setup-unavailable")) {
+                            Text(PhoneSetupCopy.UNAVAILABLE, style = MikaType.Body, fontWeight = FontWeight.SemiBold, color = c.ink)
+                            Text(
+                                PhoneSetupCopy.UNAVAILABLE_REASON, Modifier.padding(top = 8.dp),
+                                fontSize = 14.5.sp, lineHeight = 23.sp, color = c.ink2,
                             )
-                            val working = step == SetupStep.Connect && view.phase == SetupPhase.Working
-                            if (working) WorkingLine(scanning)
-                            if (usbCommand != null && (step == view.current || working)) {
-                                if (view.usbFallback) UsbStartCard(view.restart, usbCommand, onCopyUsbCommand)
-                                else if (step == SetupStep.WirelessDebugging) LinkText(PhoneSetupCopy.USB_ASK, "setup-usb-ask", onAskUsb)
+                        }
+                    }
+                } else {
+                    if (view.phase == SetupPhase.Success) {
+                        Text(
+                            PhoneSetupCopy.SUCCESS_LINE, Modifier.padding(top = 4.dp, bottom = 16.dp).testTag("setup-success"),
+                            style = MikaType.Body, fontWeight = FontWeight.SemiBold, color = c.ok,
+                        )
+                    } else {
+                        Text(
+                            PhoneSetupCopy.INTRO, Modifier.padding(top = 4.dp, bottom = 16.dp),
+                            fontSize = 14.5.sp, lineHeight = 23.sp, color = c.ink2,
+                        )
+                    }
+                    GroupCard {
+                        SetupStep.entries.forEach { step ->
+                            StepRow(
+                                step, view.marks.getValue(step), current = step == view.current, first = step.ordinal == 0,
+                                onClick = if (revisitable(step)) ({ onRevisit(step) }) else null,
+                            ) {
+                                if (step == view.current) CurrentStepBody(
+                                    step, view, onStepAction, onFailureFix, onAllowNotifications, onOpenPairingChannel, headsUpLowered, onOpenHeadsUp,
+                                    onConfirmStep, onSubmit, onAppInfo, onSkipAccessibility, onRevisit, onDiagnostics, onConnectPort,
+                                )
+                                val working = step == SetupStep.Connect && view.phase == SetupPhase.Working
+                                if (working) WorkingLine(scanning)
+                                if (usbCommand != null && (step == view.current || working)) {
+                                    if (view.usbFallback) UsbStartCard(view.restart, usbCommand, onCopyUsbCommand)
+                                    else if (step == SetupStep.WirelessDebugging) LinkText(PhoneSetupCopy.USB_ASK, "setup-usb-ask", onAskUsb)
+                                }
                             }
                         }
                     }
+                    if (SetupStep.entries.any(::revisitable)) FooterNote(PhoneSetupCopy.REVISIT_NOTE)
+                    if (view.phase != SetupPhase.Success) FooterNote(PhoneSetupCopy.SKIP_NOTE)
                 }
-                if (SetupStep.entries.any(::revisitable)) FooterNote(PhoneSetupCopy.REVISIT_NOTE)
-                if (view.phase != SetupPhase.Success) FooterNote(PhoneSetupCopy.SKIP_NOTE)
             }
             Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp)) {
                 if (view.phase == SetupPhase.Success) {
@@ -313,6 +337,7 @@ fun PhoneSetupContent(
                         if (onboarding) PhoneSetupCopy.START_USING else PhoneSetupCopy.SUCCESS_DONE, onClose,
                         Modifier.fillMaxWidth().testTag("setup-done"),
                     )
+                    SetupPhase.Unavailable -> MikaButton(stringResource(R.string.ok_got_it), onClose, Modifier.fillMaxWidth().testTag("setup-got-it"))
                     // 正在连接、连不上时也能先离开,之后在设置里接着弄
                     SetupPhase.Guide, SetupPhase.Working, SetupPhase.Failed -> MikaButton(
                         PhoneSetupCopy.LATER, onClose, Modifier.fillMaxWidth().testTag("setup-later"),
@@ -505,7 +530,11 @@ private fun AutoReadHint() {
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Icon(MikaIcons.Check, null, Modifier.size(20.dp), tint = c.ok)
-        Text(PhoneSetupCopy.AUTO_READ_HINT, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold, color = c.ink)
+        Column {
+            Text(PhoneSetupCopy.AUTO_READ_HINT, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold, color = c.ink)
+            // 有的系统一进设置就停掉 Mika 的无障碍、冻结后台:读不到时填码通知已经在通知栏里了
+            Text(PhoneSetupCopy.AUTO_READ_FALLBACK, Modifier.padding(top = 4.dp), fontSize = 13.sp, lineHeight = 18.sp, color = c.ink2)
+        }
     }
 }
 
@@ -637,7 +666,7 @@ fun PhoneHelperSection(status: BuiltinShellStatus, onRepair: () -> Unit, onUnpai
         )
     }
     if (confirming) {
-        AlertDialog(
+        MikaDialog(
             onDismissRequest = { confirming = false },
             title = { Text(PhoneSetupCopy.UNPAIR_TITLE) },
             text = { Text(PhoneSetupCopy.UNPAIR_BODY) },

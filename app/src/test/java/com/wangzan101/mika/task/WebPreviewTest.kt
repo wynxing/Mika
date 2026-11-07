@@ -30,6 +30,5 @@ class WebPreviewTest {
     @Test fun notOnTheWebIsOff() {
         assertEquals(WebPreview.Off, WebPreview.of(onWeb = false, hasTab = true, handedOver = false))
         assertEquals(WebPreview.Off, WebPreview.of(onWeb = false, hasTab = false, handedOver = true))
-        assertFalse(WebPreview.Off.open)
     }
 }

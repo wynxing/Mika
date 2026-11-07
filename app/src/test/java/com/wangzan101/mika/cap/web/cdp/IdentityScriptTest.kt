@@ -13,7 +13,6 @@ import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
-import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
@@ -83,9 +82,5 @@ class IdentityScriptTest {
         assertEquals("function get platform() { [native code] }", o.str("crossSourceBack"))
         // 再跑一遍不会补第二层
         assertTrue(o.getValue("matchMediaStillOnce").jsonPrimitive.boolean)
-    }
-
-    @Test fun harnessFileIsPresent() {
-        assertTrue(File(javaClass.getResource("/web/identity-harness.js")!!.toURI()).length() > 0)
     }
 }

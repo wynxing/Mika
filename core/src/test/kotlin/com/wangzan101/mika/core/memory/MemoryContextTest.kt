@@ -1,5 +1,6 @@
 package com.wangzan101.mika.core.memory
 
+import com.wangzan101.mika.core.agent.TokenEstimate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -51,13 +52,13 @@ class MemoryContextTest {
         assertEquals(1, block.usedIds.count { id -> approved.any { it.id == id } })
     }
 
-    @Test fun budget1200Respected() {
+    @Test fun budgetRespected() {
         val filler = "很".repeat(180)
         val relevant = (1..8).map { mem("外卖$it$filler", keywords = listOf("外卖")) }
         val pinned = (1..4).map { mem("置顶$it$filler", pinned = true) }
         val block = MemoryContext.build(distractors(20) + relevant + pinned, goal = "点外卖", lastUserTurn = null)
         val msg = block.message!!
-        assertTrue(msg.length <= MemoryContext.MAX_CHARS)
+        assertTrue(TokenEstimate.of(msg) <= MemoryContext.MAX_TOKENS)
         // 置顶的最后去:四条置顶都在,相关的只剩装得下的
         assertTrue(pinned.all { it.id in block.usedIds })
         assertTrue(block.usedIds.size in 5..6)
@@ -68,7 +69,7 @@ class MemoryContextTest {
         val strong = (1..3).map { mem("外卖不要香菜$it$filler") }
         val weak = (1..5).map { mem("外卖$it$filler", keywords = listOf("外卖")) }
         val block = MemoryContext.build(distractors(20) + weak + strong, goal = "外卖不要香菜", lastUserTurn = null)
-        assertTrue(block.message!!.length <= MemoryContext.MAX_CHARS)
+        assertTrue(TokenEstimate.of(block.message!!) <= MemoryContext.MAX_TOKENS)
         assertTrue(strong.all { it.id in block.usedIds })
         assertTrue(block.usedIds.size < 8)
     }

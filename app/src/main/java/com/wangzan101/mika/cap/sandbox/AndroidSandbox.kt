@@ -9,7 +9,9 @@ import com.wangzan101.mika.core.workspace.GatedFile
 import com.wangzan101.mika.core.workspace.WorkspaceFileGate
 import com.wangzan101.mika.core.workspace.SandboxError
 import com.wangzan101.mika.core.workspace.SandboxPaths
+import com.wangzan101.mika.settings.NetProxyStore
 import com.wangzan101.mika.core.cap.sandbox.SandboxPort
+import com.wangzan101.mika.core.cap.sandbox.SandboxProcess
 import com.wangzan101.mika.core.cap.sandbox.PhoneCommandHandler
 import com.wangzan101.mika.core.cap.sandbox.SandboxStatus
 import com.wangzan101.mika.core.knowledge.ScriptEntry
@@ -107,6 +109,8 @@ class AndroidSandbox internal constructor(
     private val startPreparing: () -> Job? = { null },
     /** 用户的联网设置;不给时按就绪状态里的。 */
     private val allowNetwork: (() -> Boolean)? = null,
+    /** 网络代理(设置 › 网络代理,见 [NetProxyStore]);空串不用。只在允许联网的命令里给。 */
+    private val proxy: () -> String = { "" },
     /** APK 内的桥客户端；已有运行环境也要随 APK 更新。 */
     private val clientScript: () -> ByteArray? = { null },
 ) : SandboxPort {
@@ -118,6 +122,7 @@ class AndroidSandbox internal constructor(
         skillFiles = { SkillsSync.bundled },
         startPreparing = { RuntimePreparer.ensure(context, retryFailed = true) },
         allowNetwork = { state.networkAllowed },
+        proxy = { NetProxyStore.get(context).get() },
         clientScript = { context.assets.open("sandbox/mika").use { it.readBytes() } },
     )
 
@@ -168,7 +173,7 @@ class AndroidSandbox internal constructor(
             // 命令结束(含超时、被杀、取消)就关掉桥:旧的名字和令牌不再能用
             val session = if (bridges) bridgeFor(workspace, network, onProgress, phone).open() else null
             try {
-                launch(cmd, ProcRunner.env(dirs, session?.name, session?.token, workspace), timeoutSec * 1000L + FALLBACK_GRACE_MS)
+                launch(cmd, ProcRunner.env(dirs, session?.name, session?.token, workspace, if (network) proxy() else ""), timeoutSec * 1000L + FALLBACK_GRACE_MS)
             } finally {
                 session?.close()
             }
@@ -188,6 +193,58 @@ class AndroidSandbox internal constructor(
             killedBySystem = !timedOut && o.exitCode == EXIT_SIGKILL, durationMs = o.durationMs,
             output = text, droppedBytes = o.droppedBytes, network = network,
         )
+    }
+
+    /**
+     * 在沙箱里启动长驻 stdio 进程。和一次性命令一样先准备运行环境、建工作区、写 resolv.conf;不提供手机工具桥
+     * (stdio server 只拿它自己的 stdin/stdout)。
+     *
+     * 进程存活期间拿着树的租约([SandboxTree.lease]),不是普通的 shared:要独占的(换根文件系统、重置、清工作区)
+     * 一来就先停掉进程、收回许可,不会被一个任务里开着的 server 挡上一个小时;之后再调这个进程就报连接已断。
+     * 建目录到启动这一段另拿一次短的 shared,独占的要等它做完才删,启动完再核一次有没有被收回。
+     */
+    override suspend fun openProcess(workspace: String, argv: List<String>, cwd: String?): SandboxProcess {
+        val network = (status() as? SandboxStatus.Ready)?.network == true
+        val rel = cwd?.takeIf { it.isNotEmpty() }?.let { c ->
+            val n = SandboxPaths.normalize(c)?.takeIf(SandboxPaths::isWritable)
+                ?: throw SandboxError("path_outside_workspace", "cwd must be a directory inside /workspace.", recoverable = true)
+            n.removePrefix(SandboxPaths.WORKSPACE).trimStart('/')
+        }.orEmpty()
+        prepare()
+        val started = java.util.concurrent.atomic.AtomicReference<Process?>(null)
+        val lease = tree.lease(onRevoke = { started.get()?.let(::stopNow) })
+        try {
+            val process = tree.shared {
+                val ws = withContext(Dispatchers.IO) {
+                    dirs.workspace(workspace).also {
+                        dirs.ensureBindSources(it)
+                        syncClientScript()
+                        rel.takeIf { c -> c.isNotEmpty() }?.let { c -> runCatching { files.mkdirs(it, c) } }
+                        if (network) writeResolvConf()
+                    }
+                }
+                val cmd = ProcRunner.argv(dirs, ws, rel, 3600, network, standIns(), argv)
+                val env = ProcRunner.env(dirs, null, null, workspace, if (network) proxy() else "")
+                val p = withContext(launcherThread + NonCancellable) {
+                    ProcessBuilder(cmd).redirectErrorStream(false).apply {
+                        environment().clear()
+                        environment().putAll(env)
+                    }.start()
+                }
+                started.set(p)
+                // 收回落在拿到租约和登记进程之间时 onRevoke 没看见它:这里补停
+                if (lease.revoked) {
+                    stopNow(p)
+                    throw SandboxError("sandbox_busy", "The sandbox is being reset; try again later.", recoverable = true)
+                }
+                p
+            }
+            return SandboxProcessHandle(process, lease)
+        } catch (e: Throwable) {
+            started.get()?.let(::stopNow)
+            lease.close()
+            throw e
+        }
     }
 
     override fun hostPath(workspace: String, sandboxPath: String, forWrite: Boolean): File? {
@@ -428,5 +485,40 @@ class AndroidSandbox internal constructor(
             p.destroy()
             thread(isDaemon = true, name = "mika-sandbox-reaper") { if (!p.waitFor(DESTROY_GRACE_MS, TimeUnit.MILLISECONDS)) p.destroyForcibly() }
         }
+    }
+}
+
+/** 先 SIGTERM 启动器(它会清掉整棵进程树),[DESTROY_GRACE_MS] 内没退就 SIGKILL;阻塞着等到进程没了。 */
+private fun stopNow(p: Process) {
+    runCatching { p.outputStream.close() }
+    p.destroy()
+    if (!p.waitFor(DESTROY_GRACE_MS, TimeUnit.MILLISECONDS)) {
+        p.destroyForcibly()
+        p.waitFor(DESTROY_GRACE_MS, TimeUnit.MILLISECONDS)
+    }
+}
+
+/** [AndroidSandbox.openProcess] 的长驻进程:关闭时先 SIGTERM 启动器(它会清掉整棵进程树),再兜底 SIGKILL,并交还租约。 */
+private class SandboxProcessHandle(
+    private val process: Process,
+    private val lease: com.wangzan101.mika.core.workspace.SandboxTree.Lease,
+) : SandboxProcess {
+    override val stdin: java.io.OutputStream get() = process.outputStream
+    override val stdout: java.io.InputStream get() = process.inputStream
+    override val stderr: java.io.InputStream get() = process.errorStream
+
+    override fun close() {
+        runCatching { process.outputStream.close() }
+        runCatching { process.destroy() }
+        // 进程树退干净了才交还租约:还在写工作区的进程不该和重置撞上(重置会先收回、自己停进程,不等这里)
+        thread(isDaemon = true, name = "mika-sandbox-stdio-reaper") {
+            try {
+                if (!process.waitFor(DESTROY_GRACE_MS, TimeUnit.MILLISECONDS)) process.destroyForcibly()
+            } finally {
+                lease.close()
+            }
+        }
+        runCatching { process.inputStream.close() }
+        runCatching { process.errorStream.close() }
     }
 }

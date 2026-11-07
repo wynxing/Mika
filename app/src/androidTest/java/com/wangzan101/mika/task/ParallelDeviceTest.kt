@@ -24,6 +24,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -155,6 +156,7 @@ class ParallelDeviceTest {
      */
     private val killRecord get() = File(context.filesDir, "parallel-kill-test.json")
 
+    @Ignore("two-run manual procedure: needs an external `adb shell am force-stop` while this test waits; a normal run would sit for 120 s and then fail")
     @Test
     fun killDuringTwoTasksRecovers() {
         val record = killRecord

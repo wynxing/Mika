@@ -2,25 +2,40 @@
 <resources>
     <string name="language_title">Language</string>
     <string name="language_system">Follow system</string>
-    <string name="language_system_detail">Simplified or Traditional Chinese to match a Chinese system, English otherwise</string>
+    <string name="language_system_detail">Uses your system language when Mika has it, English otherwise</string>
     <string name="language_simplified_chinese" translatable="false">简体中文</string>
     <string name="language_traditional_chinese" translatable="false">繁體中文</string>
     <string name="language_english" translatable="false">English</string>
-    <string name="settings_basic">Basic</string>
+    <string name="language_japanese" translatable="false">日本語</string>
+    <string name="language_korean" translatable="false">한국어</string>
+    <string name="language_spanish" translatable="false">Español</string>
+    <string name="language_portuguese" translatable="false">Português</string>
+    <string name="language_russian" translatable="false">Русский</string>
+    <string name="language_indonesian" translatable="false">Bahasa Indonesia</string>
+    <string name="language_arabic" translatable="false">العربية</string>
+    <string name="settings_basic">Common</string>
+    <string name="settings_language_appearance">Language &amp; appearance</string>
     <string name="settings_model">Model</string>
+    <string name="settings_model_sub">Models, providers &amp; Token usage</string>
     <string name="settings_not_set">Not set</string>
     <string name="settings_phone_ops">Phone control</string>
-    <string name="settings_during_work">While working</string>
-    <string name="settings_during_work_sub">Operating pace, screen stays on, the app being used is muted</string>
+    <string name="settings_during_work">Task running</string>
+    <string name="settings_during_work_sub">Autonomous mode, pace, step limit &amp; sound</string>
     <string name="settings_notif_sub">When they pop up, change in system settings</string>
-    <string name="settings_privacy">Privacy &amp; data</string>
-    <string name="settings_memory_sub">What Mika remembers and the skills it learned</string>
+    <string name="settings_privacy">My data</string>
+    <string name="settings_memory_data">Memory &amp; data</string>
+    <string name="settings_memory_sub">Memories, skills, saved routes &amp; website sign-ins</string>
+    <string name="settings_saved_data">Saved data</string>
     <string name="settings_web_logins">Website sign-ins</string>
     <plurals name="settings_count_sites">
         <item quantity="one">%1$d site</item>
         <item quantity="other">%1$d sites</item>
     </plurals>
-    <string name="settings_advanced">Advanced</string>
+    <string name="settings_other">Other</string>
+    <string name="settings_advanced">Advanced &amp; other</string>
+    <string name="settings_advanced_sub">Proxy, computing, connections &amp; repair</string>
+    <string name="settings_connections">Network &amp; connections</string>
+    <string name="settings_maintenance">Maintenance</string>
     <string name="settings_sandbox">Files &amp; computing environment</string>
     <string name="settings_routes">Saved routes</string>
     <plurals name="settings_count_routes">
@@ -28,6 +43,7 @@
         <item quantity="other">%1$d routes</item>
     </plurals>
     <string name="settings_recovery">Recovery &amp; repair</string>
+    <string name="settings_developer_group">Developer</string>
     <string name="settings_developer">Developer options</string>
     <string name="settings_about">About Mika</string>
     <string name="pill_unsupported">Not supported</string>
@@ -49,7 +65,7 @@
     <string name="settings_allowed">Allowed</string>
     <string name="settings_task_notifs">Task notifications</string>
     <string name="settings_keep_on">Keep screen on</string>
-    <string name="settings_keep_on_sub">The screen stays on while a task runs, then goes back to normal</string>
+    <string name="settings_keep_on_sub">The screen stays on while a task runs (it can still dim when you’re not using it), then goes back to normal</string>
     <string name="settings_mute">Mute the app being used</string>
     <string name="settings_mute_sub">Apps Mika is using stay silent; sound returns when you take over</string>
     <string name="settings_pace">Operating pace</string>
@@ -76,6 +92,8 @@
     <string name="capsule_mode_off_detail">Notifications only</string>
     <string name="capsule_mode_tasks_detail">Appears while a task runs or waits for you, and goes away a few seconds after</string>
     <string name="capsule_mode_always_detail">Keeps a Mika icon on screen even with no tasks</string>
+    <string name="capsule_idle_opacity">Idle opacity</string>
+    <string name="capsule_idle_opacity_detail">After a few seconds untouched; anything needing your attention stays fully visible</string>
     <string name="routes_saved">Saved routes</string>
     <string name="loading">Loading</string>
     <plurals name="routes_count">
@@ -86,4 +104,81 @@
     <string name="routes_clear_title">Clear all saved routes?</string>
     <string name="routes_clear_body">After clearing, Mika works things out step by step again next time. Other settings aren’t affected.</string>
     <string name="clear">Clear</string>
+    <string name="sandbox_proxy_off">%1$s · used once network access is on</string>
+    <string name="net_proxy">Network proxy</string>
+    <string name="net_proxy_row_sub">For model requests, updates, the in-app browser and commands</string>
+    <string name="net_proxy_hint">Used for Mika’s model requests (chat, model lists, account sign-in), in-app update downloads, the in-app browser, and commands in Files &amp; computing environment while network access is on there. Addresses on this phone or your local network (localhost, 192.168.x.x, 10.x.x.x, names ending in .local) always connect directly, so local models keep working. It may include user:password@, stored encrypted on this phone. Leave empty for a direct connection.</string>
+    <string name="net_proxy_invalid">Write it as http://host:port (socks5, socks5h and https work too), optionally with user:password@ before the host.</string>
+    <string name="net_proxy_container_only">https:// proxies are only used by commands in Files &amp; computing environment; Mika’s own connections stay direct. Use http:// or socks5:// to cover everything.</string>
+    <string name="net_proxy_browser_unsupported">This phone’s WebView can’t use a separate proxy, so the in-app browser connects directly.</string>
+    <string name="net_proxy_browser_socks_auth">The in-app browser can’t use a SOCKS proxy that needs a user name and password, so it connects directly.</string>
+    <string name="net_proxy_unreachable">Couldn’t reach the network proxy, or it didn’t pass the request on. Check that the proxy is running and that the address in Settings › Network proxy is right.</string>
+    <string name="net_proxy_auth_failed">The network proxy rejected the user name or password. Check them in Settings › Network proxy.</string>
+    <string name="sandbox_proxy_sub">Not set: commands connect directly. Change it in Settings › Network proxy</string>
+    <string name="sandbox_proxy_on">%1$s · change it in Settings › Network proxy</string>
+    <string name="sandbox_usage">Space used</string>
+    <string name="sandbox_usage_total">Total</string>
+    <string name="sandbox_usage_runtime">Runtime</string>
+    <string name="sandbox_usage_skills">Skills</string>
+    <string name="sandbox_usage_workspaces">Chat workspaces</string>
+    <string name="sandbox_usage_deleted_chat">Deleted chat</string>
+    <string name="sandbox_usage_busy">A task is running in this chat; it can’t be cleared now</string>
+    <string name="sandbox_usage_clear">Clear</string>
+    <string name="sandbox_usage_clear_title">Clear this chat’s workspace?</string>
+    <string name="sandbox_usage_clear_body">Files in the workspace of “%1$s” will be deleted: attachments you sent, screens you shared and files tasks wrote. The chat itself stays, but those files in it won’t open any more.</string>
+    <string name="sandbox_usage_clear_all">Clear all workspaces</string>
+    <string name="sandbox_usage_clear_all_title">Clear every chat’s workspace?</string>
+    <string name="sandbox_usage_clear_all_body">Files in every chat’s workspace will be deleted: attachments, shared screens and files tasks wrote. Chats stay. Chats with a running task are skipped.</string>
+    <string name="sandbox_usage_note">The runtime and skills come with the app and aren’t cleared here; to start over, use “Reset environment” above.</string>
+    <string name="appearance_title">Language and appearance</string>
+    <string name="appearance_group">Appearance</string>
+    <string name="appearance_system">Follow the system</string>
+    <string name="appearance_system_detail">Light or dark, whichever the phone is in</string>
+    <string name="appearance_light">Always light</string>
+    <string name="appearance_dark">Always dark</string>
+    <string name="settings_self_config">Let Mika change its own settings</string>
+    <string name="settings_self_config_sub">When on, tasks get one tool to read and change these preferences (pace, mute, capsule, appearance, screen-on). Models, API keys, container network and anything that deletes data are never included</string>
+    <string name="settings_step_limit">Step limit per task</string>
+    <string name="settings_step_limit_sub">Off means no limit. When the limit is reached, the task stops and says where it stopped.</string>
+    <string name="settings_step_limit_off">No limit</string>
+    <string name="settings_step_limit_custom">Custom (1–500)</string>
+    <string name="settings_step_limit_custom_apply">Use</string>
+    <string name="settings_step_limit_invalid">Enter a whole number from 1 to 500.</string>
+    <string name="mcp_servers_title">MCP servers</string>
+    <string name="mcp_servers_empty">No MCP server added</string>
+    <string name="mcp_servers_empty_sub">Add an external MCP server to expose its tools to Mika.</string>
+    <string name="mcp_servers_add">Add server</string>
+    <string name="mcp_servers_edit">Edit server</string>
+    <string name="mcp_servers_name">Name</string>
+    <string name="mcp_servers_url">Server URL</string>
+    <string name="mcp_servers_token">Access token (optional)</string>
+    <string name="mcp_servers_allow_local_http">Allow HTTP for local/private servers</string>
+    <string name="mcp_servers_trust_annotations">Trust the server’s read-only annotations</string>
+    <string name="mcp_servers_save">Save</string>
+    <string name="mcp_servers_save_test">Save &amp; test</string>
+    <string name="mcp_servers_testing">Testing…</string>
+    <string name="mcp_servers_count">%1$d servers</string>
+    <string name="mcp_servers_help">About</string>
+    <string name="mcp_servers_help_text">External MCP servers are separate from Connect a computer. Their tools appear with an MCP source in tasks. HTTPS only by default; local HTTP needs the checkbox. Tokens stay on this phone.</string>
+    <string name="mcp_servers_delete">Delete</string>
+    <string name="mcp_servers_transport_http">HTTP</string>
+    <string name="mcp_servers_transport_sse">SSE</string>
+    <string name="mcp_servers_transport_stdio">Local process</string>
+    <string name="mcp_servers_command">Command (executable and arguments)</string>
+    <string name="mcp_servers_stdio_help">Runs inside the Linux sandbox. Install the server there first.</string>
+    <string name="mcp_servers_legacy_sse">Use legacy HTTP+SSE transport (2024-11-05)</string>
+    <string name="mcp_servers_use_oauth">Use OAuth 2.1 sign-in</string>
+    <string name="mcp_servers_sign_in">Sign in</string>
+    <string name="mcp_servers_signing_in">Waiting for browser sign-in…</string>
+    <string name="mcp_servers_sign_in_ok">Signed in. Use Save &amp; test to check tools.</string>
+    <string name="mcp_servers_sign_in_failed">Sign-in failed: %1$s</string>
+    <string name="mcp_servers_run_failed">MCP servers unavailable: %1$s</string>
+    <string name="mcp_servers_status_ok">Available · %1$d tools</string>
+    <string name="mcp_servers_status_fail">Connection failed: %1$s</string>
+    <string name="mcp_servers_refresh_all">Test all</string>
+    <string name="mcp_servers_allowlist">Allowed tools (comma separated, empty = all)</string>
+    <string name="quit_title">Quit Mika completely</string>
+    <string name="quit_row_sub">Stops background tasks and hides the floating capsule</string>
+    <string name="quit_confirm_body">Tasks that are running will stop, and the floating capsule and notifications will go away. Open Mika again and everything comes back.</string>
+    <string name="quit_confirm_action">Quit</string>
 </resources>

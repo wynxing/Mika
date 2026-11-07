@@ -18,11 +18,13 @@ import com.wangzan101.mika.cap.sandbox.SandboxState
 import com.wangzan101.mika.cap.sandbox.AndroidSandbox
 import com.wangzan101.mika.cap.sandbox.SandboxDirs
 import com.wangzan101.mika.chat.SharedFile
+import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.IBinder
 import android.os.RemoteException
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Display
@@ -33,6 +35,8 @@ import com.wangzan101.mika.cap.phone.a11y.LazyPhoneScreen
 import com.wangzan101.mika.cap.phone.a11y.ScreenAccessibility
 import com.wangzan101.mika.cap.phone.a11y.PhoneUnavailable
 import com.wangzan101.mika.cap.phone.PhoneServices
+import com.wangzan101.mika.cap.phone.setup.RootShell
+import com.wangzan101.mika.cap.root.RootCommands
 import com.wangzan101.mika.cap.phone.a11y.launchableApps
 import com.wangzan101.mika.confirm.ConfirmationNotifier
 import com.wangzan101.mika.MikaApp
@@ -50,6 +54,8 @@ import com.wangzan101.mika.core.skills.SkillDrafter
 import com.wangzan101.mika.chat.ConversationStore
 import com.wangzan101.mika.memory.MemoryRuntime
 import com.wangzan101.mika.settings.MemorySwitches
+import com.wangzan101.mika.settings.ProviderStore
+import com.wangzan101.mika.core.model.ModelRole
 import com.wangzan101.mika.core.record.RunEvent
 import com.wangzan101.mika.core.replay.RouteMatcher
 import com.wangzan101.mika.core.replay.RouteRecorder
@@ -61,9 +67,12 @@ import com.wangzan101.mika.core.agent.StopSummary
 import com.wangzan101.mika.core.assembly.knownTools
 import com.wangzan101.mika.ui.ToolLabels
 import com.wangzan101.mika.core.agent.RunOutcome
+import com.wangzan101.mika.core.agent.GateReason
+import com.wangzan101.mika.core.agent.RunProgress
 import com.wangzan101.mika.core.agent.TaskState
 import com.wangzan101.mika.core.agent.Turn
 import com.wangzan101.mika.core.run.RunId
+import com.wangzan101.mika.core.run.ChannelPeer
 import com.wangzan101.mika.core.run.RunSpec
 import com.wangzan101.mika.core.run.RunProvenance
 import com.wangzan101.mika.core.run.RunOrigin
@@ -134,6 +143,14 @@ import com.wangzan101.mika.core.assembly.toolDispatcher
 import com.wangzan101.mika.core.cap.web.WEB
 
 /**
+ * 浮层恢复声音的路由:只有真正把 App 交到用户手上的接管才处理;接管对象从任务开跑起就一直存在,
+ * 不能仅凭非空提前返回。等待接管、网页接管或没有接管目标时都落到普通手机音频路径。
+ */
+internal fun restorePipSound(takeover: Takeover?, restorePhone: () -> Unit) {
+    if (takeover?.unmute() != true) restorePhone()
+}
+
+/**
  * 一个任务的全部状态:虚拟屏、循环、关卡、接管、静音、监视。[TaskService] 只管服务生命周期、意图分发与通知。
  * 本任务自己的流只在它是「显示中」的任务([service.taskState.shownRun])时同步写到服务对外的流;
  * 别的任务(并行时)、或被新任务换下去的旧任务的写入只落在自己这份,不会盖掉显示中的那个。
@@ -151,10 +168,27 @@ class TaskRun(
     internal var provenance = RunProvenance()
     internal var triggerWindowKey: String? = null
     internal var triggerActionGoal: String? = null
+    /** 条件检查运行时用户写的条件原文;对话和通知显示它,不显示生成的检查目标 [goal]。 */
+    internal var triggerCondition: String? = null
     internal var triggerThreadId: String? = null
     internal var mcpExternalId: String? = null
+    internal var channelPeer: ChannelPeer? = null
+    internal var channelMessageId: String? = null
+    /** 主循环已经给出结局的时间；与结果实际发出之间的耗时用于定位渠道回传延迟。 */
+    @Volatile internal var resultReadyAtMs = 0L
+        private set
     internal val conditionCheck get() = triggerActionGoal != null
     @Volatile private var children: ChildAgentRunner? = null
+    /** 这次任务连上的外部 MCP server;结束时关闭会话。 */
+    @Volatile private var mcpConnections: com.wangzan101.mika.settings.McpConnections? = null
+
+    /**
+     * 这次任务接上的全部外部 MCP 端点,交给 toolDispatcher 的就这一份。别的来源(以后的扩展等)也提供这类端点时在这里拼上,
+     * 不给 toolDispatcher 另加参数;各来源连上的都要归任务的 ResourceScope,收尾时一起关。
+     */
+    private fun mcpEndpoints(): List<com.wangzan101.mika.core.cap.mcp.McpConnection> = buildList {
+        mcpConnections?.let { addAll(it.connections) }
+    }
     /** 自己的一份;显示中时同步写到服务对外的那份。[show] 时整份抄过去。 */
     /** App 给的模型来源、评测钩子、屏幕画面的开关。 */
     private val env = TaskEnvironment.of(service)
@@ -200,6 +234,8 @@ class TaskRun(
     }
     private val _steers = Mirrored<List<SteerNote>>(emptyList(), service.taskState._steers)
     private val _displayId = Mirrored(-1, env.agentDisplayId)
+    /** 虚拟屏上打开过 App:画中画据此才出来(只建了空屏、没打开过 App 时没有画面)。 */
+    private val _appShown = Mirrored(false, env.agentAppShown)
     /** 正在用内置浏览器:画中画改显示网页画面。 */
     private val _webOpen = Mirrored(false, env.webScreenOpen)
 
@@ -211,14 +247,14 @@ class TaskRun(
     val frames: StateFlow<Bitmap?> = _frames.flow
     /** 本任务到此刻的活动(实际做过的事);悬浮胶囊的卡片按任务取,不只看显示中的那个。 */
     val activities: StateFlow<List<RunEvent.Activity>> = _activities.flow
-    /** 本任务的虚拟屏编号;屏到第一次 launch_app 才建,之前和释放之后为 -1。 */
+    /** 本任务的虚拟屏编号;屏到用到系统命令、事件工具或第一次打开 App 时才建,之前和释放之后为 -1。 */
     val displayId: StateFlow<Int> = _displayId.flow
     /** 此刻在用内置浏览器(工具的界面是网页);没用、任务结束后为 false。 */
     val webOpen: StateFlow<Boolean> = _webOpen.flow
     /** 本任务进行中插的话和它们的去向;悬浮胶囊的对话卡片按任务取。 */
     val steers: StateFlow<List<SteerNote>> = _steers.flow
     // 带对话编号的那份先写:收不带编号的状态时读到的编号就已经是这个任务的(界面据此不把别的对话的状态接到屏上)
-    private val mirrored = listOf(_runId, _sharedFiles, _tagged, _state, _takeoverStage, _frames, _displayId, _webOpen, _activities, _steers)
+    private val mirrored = listOf(_runId, _sharedFiles, _tagged, _state, _takeoverStage, _frames, _displayId, _appShown, _webOpen, _activities, _steers)
 
     private fun setState(s: TaskState) = synchronized(service.taskState.shownLock) {
         _tagged.value = conversationId to s
@@ -248,9 +284,17 @@ class TaskRun(
     @Volatile var muteFailedFor: String? = null
         private set
     @Volatile private var awake: KeepAwake? = null
+    /**
+     * 收尾时还有任务排着:先替接班的拿一份屏幕锁再放开自己的,服务收尾时交给放出来的那个,它开跑拿上自己那份后放开;
+     * 没人接班、或没跑起来就结束了,由服务放开。否则这里一放开,屏幕若已过了系统的熄屏时间就当场熄掉,
+     * 接班的拿锁点不亮屏幕,一开跑就停在等解锁。重复放开不会多算(见 [SharedWakeLock])。
+     */
+    @Volatile internal var wakeHandoff: WakeLockPort? = null
     /** shell 进程没了,虚拟屏和上面的 App 一起没了;任务没法接着做。 */
     @Volatile var shellDied = false
         internal set
+    /** 已接上的手机侧;浮层恢复声音据此找到当前目标 App,收尾时清空。 */
+    @Volatile private var phone: PhoneSide? = null
     /** 发布与收尾互斥;[ended] 之后不再写状态,迟到的发布不能盖掉终态或重新拿锁。 */
     private val publishLock = Any()
     private var ended = false
@@ -284,6 +328,19 @@ class TaskRun(
     fun skip(waitKey: Int?) { takeover?.let { t -> scope.launch { t.skip(waitKey) } } }
     fun putAside(waitKey: Int?) { takeover?.let { t -> scope.launch { t.putAside(waitKey) } } }
 
+    /** 浮层上的一次性「恢复声音」;重复点击会重试真实恢复,没有手机侧或目标 App 时不动。 */
+    fun unmute() {
+        scope.launch(Dispatchers.IO) {
+            restorePipSound(takeover) {
+                val p = phone ?: return@restorePipSound
+                val target = p.screen.target.value ?: return@restorePipSound
+                if (!p.audio.unmute(target.packageName, copyUser(target.userId))) {
+                    Log.w(TAG, "could not restore sound of ${target.packageName} from pip")
+                }
+            }
+        }
+    }
+
     /** 回答提问;已经不在等(超时后才答、已答过)时调 [tooLate] 告诉用户这条回答没用上。 */
     fun answer(text: String, tooLate: () -> Unit) {
         if (loop == null) return
@@ -292,6 +349,13 @@ class TaskRun(
         }
         else tooLate()
     }
+
+    /** 渠道已经核对过提问编号；仍由同一个收件箱回答，避免绕过运行生命周期。 */
+    suspend fun answerFromChannel(text: String, askId: String): Boolean =
+        inbox.send(RunInput.Answer(text, askId)) == InputReceipt.Accepted
+
+    /** 新指令取代尚未回答的普通提问；旧任务按取消收尾，排队的新指令随后执行。 */
+    fun cancelAsk(askId: String): Boolean = loop?.cancelInput(askId) == true
 
     /**
      * 同一对话在任务进行中的新原话，交给下一次模型步；准备阶段也会先排在 Inbox。
@@ -306,7 +370,7 @@ class TaskRun(
                 if (stopPressed) markSteers(setOf(messageId), SteerState.Cancelled)
                 else {
                     markSteers(setOf(messageId), SteerState.Next)
-                    service.deferMessage(conversationId, text)
+                    service.deferMessage(conversationId, text, messageId)
                 }
             }
         }
@@ -341,7 +405,7 @@ class TaskRun(
         val (discard, next) = left.partition { cancelled || it.currentTaskOnly }
         markSteers(discard.map { it.messageId }.toSet(), SteerState.Cancelled)
         markSteers(next.map { it.messageId }.toSet(), SteerState.Next)
-        next.forEach { service.deferMessage(conversationId, it.text) }
+        next.forEach { service.deferMessage(conversationId, it.text, it.messageId) }
     }
 
     /** 已交给这个任务的插话,随这一轮存进对话。 */
@@ -409,7 +473,7 @@ class TaskRun(
     }
 
     /** 超出并行上限在排队;放出来开跑时 [dequeue]。 */
-    fun queue(position: Int) { setState(TaskState.Held(TaskGate.paused(trPlural(R.plurals.queue_ahead, position)))) }
+    fun queue(position: Int) { setState(TaskState.Held(GateReason.queued(trPlural(R.plurals.queue_ahead, position)))) }
     fun dequeue() { setState(TaskState.Running(0, TaskService.PREPARING)) }
 
     /** 本任务的沙箱:一个任务一份(导出额度按任务算),工作区是本对话的。 */
@@ -423,16 +487,26 @@ class TaskRun(
     /** 此刻要显示的状态;已收尾时为空,不再重画通知。 */
     fun shownState(): TaskState? = synchronized(publishLock) { if (ended) null else _state.value }
 
+    /** 因模型失败、主模型在它那家还没测试通过时,提示去那家「重新测试」(见 [RetestHint])。测试换了主模型时不看设置里的配置。 */
+    private fun withRetestHint(end: TaskState): TaskState {
+        if (end !is TaskState.Failed || env.modelFactory !== TaskEnvironment.defaultModelFactory) return end
+        return RetestHint.apply(end, ProviderStore.get(service).untestedMainProvider()) { tr(R.string.fail_model_untested, it) }
+    }
+
     suspend fun execute(priorTurns: List<Turn>): TaskState {
         // 手机一侧(内置助手、无障碍、虚拟屏)第一次 launch_app 时才接上:只用网页、沙箱的任务不需要它们
         var connection: com.wangzan101.mika.cap.phone.shell.ShellBinding? = null
-        var phone: PhoneSide? = null
+        phone = null
         // 虚拟屏、网页显示等:建好当场归它,收尾时一起放掉;不经「建完再记到变量」,取消落在中间也不会漏
         val resources = ResourceScope()
         var watcher: DeviceStateWatcher? = null
         var mute: AudioMute? = null
+        // 模型标下的任务结束时各 App 的去留(在手机端口上);收尾时交给内置助手
+        var afterTask: com.wangzan101.mika.core.uistate.AfterTaskMarks? = null
         var shellDeath: IBinder.DeathRecipient? = null
         var shellBinder: IBinder? = null
+        val traces = (service.application as MikaApp).detailedTraces
+        val traceTicket = traces.ticket()
         var record: RunHandle? = null
         var runStore: RunStore? = null
         // 这次运行里经计量的模型请求(含旁路调用),收尾时记进运行记录
@@ -453,10 +527,21 @@ class TaskRun(
         )
         sideScope = side
         try {
+            // 用户在「干活时」关掉了常亮就不拿唤醒锁;开跑就按此刻的状态(准备中)拿上:
+            // 开模型、读知识、选路线、判断意图这些第一步之前的准备和推理期间屏幕也不熄
+            awake = if (FeatureFlags.get(service).keepScreenOn()) KeepAwake(service.wakeLock.lease(), side).also { it.onState(_state.value) } else null
+            // 前一个任务替这个拿着的那份,自己的拿上了就放开
+            wakeHandoff?.release()
+            wakeHandoff = null
             val model = env.modelFactory(service, session) ?: return TaskState.Failed(tr(R.string.fail_no_main_model), FailKind.Environment)
             // 用户在浏览器页上对着一页问的:那一页借给这个任务当当前网页标签(见 PageLoans);开跑时页面还开着才借得到
             val pageLoan = if (provenance.origin == RunOrigin.Ui) withContext(Dispatchers.Main) { UserBrowser.existing()?.claim(conversationId, key) } else null
             val light = env.lightModelFactory(service, session)
+            // 同一模型分成两个实例并不会更便宜或更快;禁止它给批量/收尾工具反而只会增加改派和逐步操作。
+            // 这只跳过逐步分工,轻量角色仍可用于意图判断、标题和收尾等辅助调用。
+            val routedLight = light?.takeIf {
+                !ProviderStore.get(service).roles.value.sameModel(ModelRole.Main, ModelRole.Light)
+            }
             val vision = env.visionModelFactory(service, session)
 
             val (knowledge, skills) = withContext(Dispatchers.IO) {
@@ -466,8 +551,19 @@ class TaskRun(
                 val learnedNotes = legacyNames().let { legacy -> memoryRuntime.appKnowledge().notes().mapValues { it.value.copy(text = legacy.rewrite(it.value.text)) } }
                 KnowledgeStore(KnowledgeStore.loadBundled(), userNotes, learnedNotes) to GuideCatalog.loadBundled()
             }
+            val appAccess = (service.application as MikaApp).appAccess
+            // 应用访问边界:工具和预览画面共用一份(下面接手机端口时建),窗口没变时核对结果直接沿用,预览不必每一帧都问窗口
+            var accessGuard: com.wangzan101.mika.core.uistate.AppAccessScreenPort? = null
+            suspend fun previewAllowed(): Boolean {
+                val guard = accessGuard ?: return false
+                return try {
+                    guard.checkAppAccess()
+                    true
+                } catch (e: CancellationException) { throw e }
+                catch (_: com.wangzan101.mika.core.access.AppAccessDenied) { false }
+            }
             val metrics = mainScreenMetrics()
-            // 在 App 里操作的节奏(设置 › 干活时);评测、真机验收按钩子覆盖
+            // 在 App 里操作的节奏(设置 › 任务运行);评测、真机验收按钩子覆盖
             val pace = env.evalHooks.operatingPace ?: FeatureFlags.get(service).operatingPace()
             // 助手是否连着;没接上手机之前当作连着(网页、沙箱的步骤不看它)
             val shellUp = MutableStateFlow(true)
@@ -488,7 +584,7 @@ class TaskRun(
                     }
                 // 服务卡在「开着却没运行」、正在自动重启时多等一会儿,修好了接着做,放弃了照常报错
                 val a11y = AccessibilityRepair.awaitService(ScreenAccessibility.instance, phoneServices.recovery.accessibilityRepair.phase, A11Y_WAIT_MS)
-                    ?: throw PhoneUnavailable(NO_ACCESSIBILITY)
+                    ?: throw PhoneUnavailable(StatusCopy.accessibilityUnavailable(phoneServices.recovery.accessibility.value.enabled))
                 recovery.beginRun(shell, key)
                 // 只有用过手机的任务才跟着 shell 的死活:shell 没了,虚拟屏和上面的 App 一起没了
                 shellDeath = IBinder.DeathRecipient {
@@ -499,7 +595,7 @@ class TaskRun(
                 shellBinder = shell.asBinder()
                 side.launch { conn.shell.map { it != null }.collect { shellUp.value = it } }
                 val agentDisplay = LazyAgentDisplay(metrics.widthPixels, metrics.heightPixels) {
-                    suspend fun create() = resources.acquire(Dispatchers.IO, AgentDisplay::release) { AgentDisplay(shell, metrics.widthPixels, metrics.heightPixels, metrics.densityDpi) }
+                    suspend fun create() = resources.acquire(Dispatchers.IO, AgentDisplay::release) { AgentDisplay(shell, metrics.widthPixels, metrics.heightPixels, metrics.densityDpi, service.getSystemService(DisplayManager::class.java)) }
                     try {
                         create()
                     } catch (e: Exception) {
@@ -507,29 +603,42 @@ class TaskRun(
                         if (!parallel || !service.otherRunHasDisplay(this@TaskRun)) throw e
                         // 外壳建不出第二块屏:这次运行期间不再并行;本任务排在后面,等别的任务的屏都放掉再建
                         service.taskState.markSecondDisplayFailed()
-                        publish(TaskState.Held(TaskGate.paused(WAITING_DISPLAY)))
+                        publish(TaskState.Held(GateReason.queued(WAITING_DISPLAY)))
                         while (service.otherRunHasDisplay(this@TaskRun)) delay(DISPLAY_RETRY_MS)
                         create()
                     }.also { d ->
                         _displayId.value = d.displayId
-                        side.launch { d.frames.collect { if (dispatcher?.surface != WEB) _frames.value = it } }
+                        side.launch { d.frames.collect { if (dispatcher?.surface != WEB) _frames.value = if (previewAllowed()) it else null } }
+                        side.launch { appAccess.state.collect { if (dispatcher?.surface != WEB && !previewAllowed()) _frames.value = null } }
                     }
+                }
+                val audio = recovery.audioMute(shell, key).also { mute = it }
+                val muter = appMuter(shell, audio)
+                // 占用登记里的名字:另一份用户里的那份单独占,和本来那份互不挡;占着的任务还在不在用它,问内置助手
+                fun claimKey(pkg: String, user: Int?) = if (user == null) pkg else "$pkg@$user"
+                fun stillUsed(pkg: String, user: Int?): () -> Boolean = {
+                    runCatching { if (user == null) shell.displayOfPackage(pkg) else shell.displayOfPackageInUser(pkg, user) }.getOrDefault(-1) >= 0
                 }
                 val screen = AndroidScreen(
                     a11y, shell, agentDisplay, { recovery.markClipHeld(it) },
                     clipLock = service.clipLock, checkOtherTasks = parallel,
-                    reserve = { pkg -> service.reservePackage(pkg, key) { runCatching { shell.displayOfPackage(pkg) }.getOrDefault(-1) >= 0 } },
-                    // 另一份用户里的那份单独占:和本来那份互不挡
-                    reserveCopy = { pkg, user ->
-                        service.reservePackage("$pkg@$user", key) { runCatching { shell.displayOfPackageInUser(pkg, user) }.getOrDefault(-1) >= 0 }
+                    reserve = { pkg -> service.reservePackage(pkg, key, stillUsed(pkg, null)) },
+                    reserveCopy = { pkg, user -> service.reservePackage(claimKey(pkg, user), key, stillUsed(pkg, user)) },
+                    appFree = { pkg, user -> service.packageFree(claimKey(pkg, user), key, stillUsed(pkg, user)) },
+                    // 模型要了等:等的时候界面写「等另一个任务用完某 App」(仍是在干活,不算要你处理),等完放回原来那句
+                    awaitApp = { pkg, user, timeoutMs, free ->
+                        waitingForApp(ConfirmationNotifier.appLabel(service, pkg)) { service.awaitPackage(claimKey(pkg, user), key, timeoutMs, free) }
                     },
                     clipSaved = { original, ours -> recovery.saveClip(original, ours) },
                     handedOver = { handoverRef?.handedOver == true },
                     // 打字一段一段出来;App 知识说限制浏览快慢的 App 打得更慢
                     typing = { pkg -> pace.typing(PlacePace.of(pkg?.let(skills::appPace))) },
+                    // 启动前就静上,开头几秒也没声;启动被拒就还原
+                    beforeOpen = muter::beforeOpen,
+                    notOpened = muter::notOpened,
+                    appAccess = appAccess,
                 )
-                val audio = recovery.audioMute(shell, key).also { mute = it }
-                val side0 = PhoneSide(shell, a11y, screen, agentDisplay, audio)
+                val side0 = PhoneSide(shell, a11y, screen, agentDisplay, muter)
                 phone = side0
                 watchTarget(side0, states)
                 return screen
@@ -542,6 +651,13 @@ class TaskRun(
                         withContext(Dispatchers.IO) { runCatching { AppCopyReader.read(s, launchableApps(service.packageManager, service.packageName)) }.getOrNull() }
                     }.orEmpty()
                 }) { connectPhone() }
+            val accessedPhone = com.wangzan101.mika.core.uistate.AppAccessScreenPort(
+                phoneScreen, appAccess,
+                packages = { phone?.screen?.accessPackages().orEmpty() },
+                protectedUi = { appAccess.sensitiveUi }, ownPackage = service.packageName,
+                windowToken = { ScreenAccessibility.windowGeneration() },
+            ).also { accessGuard = it }
+            afterTask = phoneScreen.afterTask
             // 挪回虚拟屏后等窗口出现,Agent 接下来读屏才读得到
             suspend fun moveTask(taskId: Int, to: Int): Boolean {
                 val p = phone ?: return false
@@ -554,20 +670,36 @@ class TaskRun(
                 val id = phone?.display?.current?.displayId ?: return false
                 return moveTask(taskId, id)
             }
-            val taskGate = TaskGate(states.locked, shellUp) {
+            val taskGate = TaskGate(states.locked, shellUp,
+                refreshLocked = states::refresh,
+                unattendedUnlock = if (provenance.origin == RunOrigin.Trigger) {
+                    {
+                        val result = (service.application as MikaApp).deviceAccess.access.unlock()
+                        states.refresh()
+                        Log.i(TAG, "scheduled unlock finished: ${result.status}")
+                    }
+                } else null,
+            ) {
                 val t = phone?.screen?.target?.value
                 t != null && t.taskId >= 0 && moveBackToAgent(t.taskId)
             }
             gate = taskGate
-            // 用户在「干活时」关掉了常亮就不拿唤醒锁
-            awake = if (FeatureFlags.get(service).keepScreenOn()) KeepAwake(service.wakeLock.lease(), side) else null
             // 记录开不起来就不记,任务照跑
             val sink: RunSink = withContext(Dispatchers.IO) {
                 runCatching {
                     val runs = RunStore(service).also { runStore = it }
-                    runs.open(goal).also { record = it; _runId.value = it.runId }
+                    runs.open(goal).also { opened ->
+                        record = opened
+                        _runId.value = opened.runId
+                        mcpExternalId?.let { ext ->
+                            (service.application as? com.wangzan101.mika.MikaApp)?.remoteTasks?.rememberRun(ext, opened.runId)
+                        }
+                    }
                 }.onFailure { Log.w(TAG, "run record unavailable, running without it", it) }.getOrNull()
             } ?: RunSink.NONE
+            val trace = record?.takeIf { traceTicket != null }?.let { run ->
+                resources.acquire(Dispatchers.IO, traces.store::finish) { traces.start(traceTicket, run.runId) }
+            }
             // 装了哪些 App:每个任务读一次,读不到就当没有;参考资料用
             val apps = try { phoneScreen.listApps() } catch (e: CancellationException) { throw e } catch (e: Exception) { emptyList() }
             val speed = FeatureFlags.get(service).speedFlags()
@@ -635,13 +767,32 @@ class TaskRun(
             }
             // 这个对话里用户发来的屏幕(跟着对话存在工作区里)
             val userScreens = (service.application as MikaApp).userScreens.source(conversationId)
+            val stepLimit = if (conditionCheck) null else FeatureFlags.get(service).taskStepLimit()
             val runSpec = RunSpec(RunId(key), goal, conversationId,
                 priorTurns,
-                provenance, if (conditionCheck) setOf("web", "sandbox") else null, readOnly = conditionCheck)
+                provenance, if (conditionCheck) setOf("web", "sandbox") else null, readOnly = conditionCheck,
+                stepBudget = stepLimit)
+            // 外部 MCP server 只在主任务接;子任务/条件检查/评测不接,避免绕过父任务审批、影响评测可复现
+            if (!conditionCheck) {
+                // 连上的当场归 resources:收尾(含取消、失败、连到一半被停)关作用域时一起关,stdio server 的进程和沙箱租约跟着放掉
+                mcpConnections = (service.application as MikaApp).mcpServers.connectionsFor(
+                    resources,
+                    com.wangzan101.mika.mcp.ConversationMcpResultStore(SandboxDirs(service), conversationId),
+                    conversationId,
+                )
+                // 连接失败、超过总时限没连上的只在任务卡片上提示一句,不打断任务;详情在设置页的健康状态里
+                mcpConnections?.failures?.takeIf { it.isNotEmpty() }?.let { failures ->
+                    val store = (service.application as MikaApp).mcpServers
+                    val names = store.servers.value.associate { it.id to it.name }
+                    (_state.value as? TaskState.Running)?.let {
+                        publish(it.copy(note = tr(R.string.mcp_servers_run_failed, failures.joinToString(", ") { f -> names[f.first] ?: f.first })))
+                    }
+                }
+            }
             val runApproval = approvalControl.start(remote = provenance.origin == RunOrigin.Mcp).also { approval = it }
             val childRunner = if (provenance.origin == RunOrigin.Ui && web != null) ChildAgentRunner(
                 create = { childSpec ->
-                    val childTools = toolDispatcher(phoneScreen, model.capabilities.vision,
+                    val childTools = toolDispatcher(accessedPhone, model.capabilities.vision,
                         web = web, webPacing = { PagePacing.human() }, webPlacePace = { PlacePace.of(catalog.sitePace(it)) },
                         webIdleScroll = { IdleScroll(Random.Default) },
                         appPacing = { pace.appPacing() }, appPace = { PlacePace.of(catalog.appPace(it)) }, appIdleScroll = { IdleScroll(Random.Default) },
@@ -656,7 +807,11 @@ class TaskRun(
                 store = (service.application as MikaApp).childRuns,
                 ownerAlive = { job?.isActive == true },
             ).also { children = it } else null
-            val tools = toolDispatcher(phoneScreen, model.capabilities.vision, catalog, recordFrames = true, vision = vision?.let { VisionService(it, BitmapImageOps) },
+            val tools = toolDispatcher(accessedPhone, model.capabilities.vision, catalog, recordFrames = true, vision = vision?.let { VisionService(it, BitmapImageOps) },
+                // 设置里允许 Mika 改自己时,才把 settings_list、settings_set 发给模型
+                selfConfig = if (FeatureFlags.get(service).selfConfig()) {
+                    com.wangzan101.mika.settings.SelfConfigImpl(FeatureFlags.get(service))
+                } else null,
                 stableRefs = speed.inlineScreen, inlineScreen = speed.inlineScreen,
                 adaptiveVision = speed.adaptiveVision,
                 deepLinks = speed.deepLinks, memory = memory, profile = if (memory != null) memoryRuntime.profile() else null,
@@ -683,7 +838,15 @@ class TaskRun(
                 scheduleAdmin = if (provenance.origin == RunOrigin.Ui) LocalScheduleAdmin(service) else null,
                 childHost = childRunner,
                 // 用户要求时写下或改写个人技能(和自学收下的放在同一处,设置里立刻能看到)
-                personalSkills = memoryRuntime.skills())
+                personalSkills = memoryRuntime.skills(),
+                // 这个对话之前几轮的运行记录(只读;history_read 只认 runSpec 里这个对话的轮次)
+                runRecords = RunStore(service).reader(),
+                mcpServers = mcpEndpoints(),
+                // 仅用户明确配置并启用时提供通用搜索;否则继续用浏览器搜索。
+                webSearch = com.wangzan101.mika.settings.WebSearchSettings.get(service).service(),
+                // 已 root 的手机上用户打开了「允许 Mika 执行 root 命令」才登记 root 工具(子任务、条件检查不给)
+                root = phoneServices.shellManager.root.takeIf { !conditionCheck && it.commandsAllowed() }
+                    ?.let { r -> RootCommands(RootShell::su, r::commandsAllowed) { a -> if (a == null) r.suGone() else r.commandsDenied(a) } })
             dispatcher = tools
             val agent = AgentLoop(
                 model, tools,
@@ -692,7 +855,7 @@ class TaskRun(
                 gate = { w ->
                     if (phoneScreen.acquired && dispatcher?.surface != WEB) phone?.screen?.let { awaitUserPick(it, taskGate, w) }
                     taskGate.pass({ phoneScreen.acquired && dispatcher?.surface != WEB }, w)
-                }, knowledge = knowledge, sink = sink, installedApps = { apps },
+                }, knowledge = knowledge, sink = sink, trace = trace, installedApps = { apps },
                 // 选渠道用的事实:装了哪些 App、在 Mika 里登录过哪些网站、有没有内置浏览器
                 channelFacts = {
                     val registry = WebSites.registry(service)
@@ -703,7 +866,7 @@ class TaskRun(
                         challengedSites = withContext(Dispatchers.IO) { registry.challengedSites() },
                     )
                 },
-                maxSteps = env.evalHooks.maxSteps ?: AgentLoop.UNLIMITED_STEPS,
+                maxSteps = env.evalHooks.maxSteps ?: runSpec.stepBudget ?: AgentLoop.UNLIMITED_STEPS,
                 reviewFinalAnswer = false,
                 inputTimeoutMs = TaskService.INPUT_TIMEOUT_MS,
                 // 询问 / 自主:询问时只有花钱的一步先问(有确认关卡和 request_confirmation);自主时连付款也不问。
@@ -714,14 +877,14 @@ class TaskRun(
                 confirmTimeoutMs = TaskService.CONFIRM_TIMEOUT_MS,
                 selfPackage = service.packageName,
                 flags = speed,
-                // 只在 lightSteps 打开、轻量模型能调工具时生效
-                router = light?.let { ModelRouter(model, it) },
+                // 只在 lightSteps 打开、轻量模型能调工具且与主模型不是同一份配置时生效
+                router = routedLight?.let { ModelRouter(model, it) },
                 intentJudge = if (provenance.origin == RunOrigin.Ui) light ?: model else null,
                 // 选路线是辅助判断:用轻量模型,没配用主模型
                 routes = if (speed.replay) RouteMatcher(light ?: model, routeStore, knowledge) else null,
                 skills = catalog,
                 memory = memory,
-                interaction = service.interaction(conversationId),
+                interaction = service.interaction(conversationId, channelPeer),
                 profileSnapshot = profileSnapshot,
                 streamReplies = true,
                 userScreens = userScreens,
@@ -746,12 +909,19 @@ class TaskRun(
                 override suspend fun moveToMain(taskId: Int) = moveTask(taskId, Display.DEFAULT_DISPLAY)
                 override suspend fun moveBack(taskId: Int) = moveBackToAgent(taskId)
                 override fun setSound(packageName: String, on: Boolean) {
-                    val audio = phone?.audio ?: return
+                    val p = phone ?: return
+                    // 交出去的若是目标 App,按目标所属的那份算;别的按本来那份
+                    val user = p.screen.target.value?.takeIf { it.packageName == packageName }?.let { copyUser(it.userId) }
                     if (on) {
-                        if (!audio.restore(packageName)) Log.w(TAG, "could not restore sound of $packageName for takeover")
-                    } else if (FeatureFlags.get(service).muteTarget() && !audio.mute(packageName)) {
-                        muteFailedFor = packageName
+                        if (!p.audio.release(packageName, user)) Log.w(TAG, "could not restore sound of $packageName for takeover")
+                    } else {
+                        p.audio.opened(packageName, user)
                     }
+                }
+                override fun unmute(packageName: String) {
+                    val p = phone ?: return
+                    val user = p.screen.target.value?.takeIf { it.packageName == packageName }?.let { copyUser(it.userId) }
+                    if (!p.audio.unmute(packageName, user)) Log.w(TAG, "could not restore sound of $packageName from pip takeover")
                 }
                 override fun watchInput(packageName: String) {
                     counting?.cancel()
@@ -822,18 +992,25 @@ class TaskRun(
                     service.refreshNotifications(this@TaskRun)
                 }
             }
-            return withContext(tally) { agent.run(runSpec, inbox) }.also { usedGroups = agent.usedGroups.toList() }
+            val end = withContext(tally) { agent.run(runSpec, inbox) }
+            resultReadyAtMs = SystemClock.elapsedRealtime()
+            return end.also { usedGroups = agent.usedGroups.toList() }.let(::withRetestHint)
         } finally {
+            if (resultReadyAtMs == 0L) resultReadyAtMs = SystemClock.elapsedRealtime()
             handoffUnconsumed()
             side.cancel()
             _frames.value = null
             _webOpen.value = false
             synchronized(publishLock) { ended = true }
+            if (awake != null && service.hasQueuedRuns()) wakeHandoff = service.wakeLock.lease().also { it.acquire() }
             awake?.close()
             awake = null
             shellDeath?.let { d -> runCatching { shellBinder?.unlinkToDeath(d, 0) } }
             loop = null
             children = null
+            // 早点关:后面收尾要等屏和网页;resources 关时还会再关一次(只关一次,不重复)
+            mcpConnections?.close()
+            mcpConnections = null
             mcpEvents?.close()
             liveFeed?.close()
             approval?.let { approvalControl.end(it) }
@@ -846,7 +1023,12 @@ class TaskRun(
             withContext(Dispatchers.IO + NonCancellable) {
                 // 前面哪步抛错,屏和网页显示也照放(按建的反序)
                 try {
+                    // 先定 Mika 屏上 App 的去留(留下的挪到主屏后面、正在出声的关掉)并释放屏,再还原静音:留下的不会突然出声
+                    val apps = phone?.takeIf { !shellDied }?.let { p ->
+                        p.display.current?.let { d -> AppsAfterTaskEnd.finish(p.shell, d.displayId, afterTask) }
+                    }
                     record?.let { r ->
+                        apps?.let { r.event(RunEvent.State(System.currentTimeMillis(), "apps_after_task", it.detail)) }
                         r.event(tally.event(System.currentTimeMillis()))
                         r.close()
                         if (BuildConfig.DEBUG) runStore?.mirrorToExternal(r.runId)
@@ -858,8 +1040,10 @@ class TaskRun(
                     resources.close()
                 }
             }
+            phone = null
             // 屏释放后、对外报结束前清掉:界面看到任务结束时已经没有屏了
             _displayId.value = -1
+            _appShown.value = false
             if (connection != null) phoneServices.sharedShell.release()
         }
     }
@@ -867,8 +1051,33 @@ class TaskRun(
     /** 手机一侧:用过手机的任务才有。 */
     private class PhoneSide(
         val shell: com.wangzan101.mika.shell.IMikaShell, val a11y: ScreenAccessibility, val screen: AndroidScreen,
-        val display: LazyAgentDisplay, val audio: AudioMute,
+        val display: LazyAgentDisplay, val audio: AppMuter,
     )
+
+    /**
+     * 这次任务的静音规则(见 [AppMuter]):Mika 自己不静;没有桌面入口的系统包不静(系统界面、选择框一类);
+     * 用户在主屏上看得见的不静;没静成的记下,任务进度上提示可能出声。
+     */
+    private fun appMuter(shell: com.wangzan101.mika.shell.IMikaShell, audio: AudioMute): AppMuter {
+        val pm = service.packageManager
+        val own = service.packageName
+        fun system(pkg: String) = runCatching {
+            pm.getApplicationInfo(pkg, 0).flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+        }.getOrElse { runCatching { shell.isSystemPackage(pkg) }.getOrDefault(false) }
+        return AppMuter(
+            audio,
+            enabled = { FeatureFlags.get(service).muteTarget() },
+            mutable = { pkg -> pkg != own && (runCatching { pm.getLaunchIntentForPackage(pkg) }.getOrNull() != null || !system(pkg)) },
+            onMainScreen = { pkg, user -> runCatching { shell.visibleOnMainScreen(pkg, user ?: AppCopyReader.myUser) }.getOrDefault(true) },
+            failed = { pkg ->
+                muteFailedFor = pkg
+                publish(_state.value)
+            },
+        )
+    }
+
+    /** 任务所属的用户 → 静音按哪一份:本来那份(或读不到)为 null,另一份用户里的为那个用户编号。 */
+    private fun copyUser(userId: Int): Int? = userId.takeIf { it >= 0 && it != AppCopyReader.myUser }
 
     @Volatile private var handoverRef: Takeover? = null
     @Volatile private var sideScope: CoroutineScope? = null
@@ -885,18 +1094,24 @@ class TaskRun(
         screen.afterUserStep(r)
     }
 
-    /** 目标 App 换了就静音,并盯着它有没有被用户挪到主屏。 */
+    /**
+     * 目标 App 换了就静音(启动前多半已静上,这里补上没静成的),并盯着它有没有被用户挪到主屏。
+     * Mika 屏上冒出别的 App(从目标 App 里点开的、另一份顶上来的)也是第一次看到就静;静音按「包 + 用户」,另一份单独静。
+     * 用户接管期间屏上的事归用户,不去静。
+     */
     private fun watchTarget(p: PhoneSide, states: DeviceStateWatcher) {
         val side = sideScope ?: return
         side.launch(Dispatchers.IO) {
+            p.screen.foregroundApps().collect { t ->
+                if (handoverRef?.handedOver != true) p.audio.opened(t.packageName, copyUser(t.userId))
+                // 窗口变得很密:两次之间至少隔一会儿,中间的变化合成一次
+                delay(FOREGROUND_GAP_MS)
+            }
+        }
+        side.launch(Dispatchers.IO) {
             p.screen.target.filterNotNull().collectLatest { t ->
-                // 用户在「干活时」关掉了静音就不碰它的声音。静音按包作用在 Mika 所在的用户上:目标是另一份用户里的那份时不碰,
-                // 免得把用户手上本来那份静了音
-                val otherCopy = t.userId >= 0 && t.userId != AppCopyReader.myUser
-                if (FeatureFlags.get(service).muteTarget() && !otherCopy && !p.audio.mute(t.packageName)) {
-                    muteFailedFor = t.packageName
-                    publish(_state.value)
-                }
+                _appShown.value = true
+                if (handoverRef?.handedOver != true) p.audio.opened(t.packageName, copyUser(t.userId))
                 // 有目标 App 就说明 launch_app 已经建好了屏
                 val displayId = p.display.current?.displayId
                 if (t.taskId >= 0 && displayId != null) {
@@ -1041,6 +1256,21 @@ class TaskRun(
 
     private fun sandboxOnline() = (sandbox.status() as? SandboxStatus.Ready)?.network == true
 
+    /**
+     * 等另一个任务放开 [app] 的这段时间:对外的进展写「等另一个任务用完 [app]」,仍是 Running,不是暂停、也不要你处理;
+     * 等完(放开了、等不到、被停掉)把等之前那一句放回去。等之前不在干活(比如已经停下来要你处理)就不改。
+     */
+    private suspend fun <T> waitingForApp(app: String, wait: suspend () -> T): T {
+        val before = _state.value as? TaskState.Running ?: return wait()
+        val waiting = before.copy(progress = RunProgress.WaitingForApp(app))
+        publish(waiting)
+        try {
+            return wait()
+        } finally {
+            if (_state.value == waiting) publish(before)
+        }
+    }
+
     private fun publish(state: TaskState) {
         // 被挪走后到 gate 拦下之前,循环可能还在推理:对外先显示暂停
         // 循环自己报的终态不往外发:终态只由 [end] 在记好运行编号之后写,否则界面先收到结束、拿不到编号
@@ -1080,11 +1310,12 @@ class TaskRun(
         const val WEB_FRAME_MS = 500L
         const val SHELL_WAIT_MS = 15_000L
         const val DISPLAY_RETRY_MS = 1_000L
+        /** Mika 屏上的前台 App 两次重读之间至少隔这么久。 */
+        const val FOREGROUND_GAP_MS = 300L
         val WAITING_DISPLAY: String get() = tr(R.string.task_waiting_display)
         const val A11Y_WAIT_MS = 5_000L
         val NO_PHONE_HELPER: String get() = tr(R.string.task_no_phone_helper)
         val NO_PHONE_HELPER_USB: String get() = tr(R.string.task_no_phone_helper_usb)
-        val NO_ACCESSIBILITY: String get() = tr(R.string.task_no_a11y)
         const val TAG = "MikaTask"
     }
 }

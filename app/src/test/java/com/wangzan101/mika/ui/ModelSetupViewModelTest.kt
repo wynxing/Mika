@@ -6,8 +6,11 @@ import com.wangzan101.mika.core.model.ChatModel
 import com.wangzan101.mika.core.model.ListFailure
 import com.wangzan101.mika.core.model.ListedModel
 import com.wangzan101.mika.core.model.Message
+import com.wangzan101.mika.core.model.ModelEndpoint
 import com.wangzan101.mika.core.model.ModelError
+import com.wangzan101.mika.core.model.ModelHttp
 import com.wangzan101.mika.core.model.ModelListResult
+import com.wangzan101.mika.core.model.ModelProtocol
 import com.wangzan101.mika.core.model.ModelReply
 import com.wangzan101.mika.core.model.ModelRole
 import com.wangzan101.mika.core.model.Part
@@ -222,6 +225,161 @@ class ModelSetupViewModelTest {
                 "主模型用了测试通过的「deepseek/deepseek-v4.1-flash」。",
             s.probeNote,
         )
+    }
+
+    /**
+     * 列表写明了某个模型不走当前接口类型(如聚合服务把只支持 /messages 的模型排在前面):不试它,直接试下一个。
+     * 试了也必然失败,而每次失败要等满 PROBE_TIMEOUT_MS。
+     */
+    @Test fun modelOnAnotherProtocolIsSkippedWithoutProbing() = runTest {
+        val url = "https://api.commandcode.ai/provider/v1"
+        listing[url] = ModelListResult.Ok(listOf(
+            ListedModel("claude-sonnet-5-5", protocols = listOf(ModelProtocol.Messages)),
+            ListedModel("deepseek/deepseek-v4-flash", protocols = listOf(ModelProtocol.ChatCompletions, ModelProtocol.Responses)),
+        ))
+        reply = { ModelReply(listOf(Part.ToolCall("c1", "get_time", "{}")), StopReason.ToolUse, null) }
+        val store = store()
+        val vm = vm(store)
+        vm.selectPreset(ProviderPresets.custom.label); vm.setBaseUrl(url); vm.setApiKey("sk"); vm.testAndSave(); runCurrent()
+        assertEquals(listOf("deepseek/deepseek-v4-flash"), built.map { it.first })
+        val s = vm.state.value
+        assertFalse(s.showForm)
+        assertNull(s.probeNote)
+        assertEquals("deepseek/deepseek-v4-flash", store.configFor(ModelRole.Main)?.model)
+    }
+
+    /**
+     * 列表给某个模型单独指定了接口(见 [ListedModel.endpoint]):调用按它自己说的协议走,与这里选的接口类型无关,
+     * 不能因为 `supported_endpoints` 里没有当前接口类型就筛掉。
+     */
+    @Test fun modelWithItsOwnEndpointIsProbedWhateverTheKindIs() = runTest {
+        val url = "https://api.commandcode.ai/provider/v1"
+        listing[url] = ModelListResult.Ok(listOf(
+            ListedModel(
+                "claude-sonnet-5-5",
+                endpoint = ModelEndpoint(ModelProtocol.Messages, "https://api.commandcode.ai/provider/v1"),
+                protocols = listOf(ModelProtocol.Messages),
+            ),
+        ))
+        reply = { ModelReply(listOf(Part.ToolCall("c1", "get_time", "{}")), StopReason.ToolUse, null) }
+        val store = store()
+        val vm = vm(store)
+        vm.selectPreset(ProviderPresets.custom.label); vm.setBaseUrl(url); vm.setApiKey("sk"); vm.testAndSave(); runCurrent()
+        assertEquals(listOf("claude-sonnet-5-5"), built.map { it.first })
+        assertEquals("claude-sonnet-5-5", store.configFor(ModelRole.Main)?.model)
+    }
+
+    /** 列表里的模型全都写明不走当前接口类型:一个都不试,照旧存下服务商,并说清为什么。 */
+    @Test fun allModelsOnAnotherProtocolSaveWithAReason() = runTest {
+        val url = "https://api.commandcode.ai/provider/v1"
+        listing[url] = ModelListResult.Ok(listOf(
+            ListedModel("claude-sonnet-5-5", protocols = listOf(ModelProtocol.Messages)),
+            ListedModel("claude-sonnet-5", protocols = listOf(ModelProtocol.Messages)),
+        ))
+        reply = { throw AssertionError("不该试调用:这些模型不走 OpenAI 兼容") }
+        val store = store()
+        val vm = vm(store)
+        vm.selectPreset(ProviderPresets.custom.label); vm.setBaseUrl(url); vm.setApiKey("sk"); vm.testAndSave(); runCurrent()
+        assertTrue("不该试调用", built.isEmpty())
+        val p = store.providers.value.single()
+        val s = vm.state.value
+        assertFalse(s.showForm)
+        // 一个都没通过:服务商照旧存下、说清原因,并请用户自己从列表里选。
+        // 这两个模型一次都没试,所以不能出现「试了 X、Y」那一行。
+        // 原因是接口类型到不了它们,末尾那句不能让人去「开通」(那不是这里的问题),该换接口类型或换这个接口类型到得了的模型。
+        assertEquals(p.id, s.pickToProbe)
+        assertEquals(
+            "服务商已连上，但「claude-sonnet-5-5」没测试通过：它不走你选的接口类型，请求到不了它。" +
+                "换一个这个接口类型到得了的模型，或者换接口类型。",
+            s.probeNote,
+        )
+    }
+
+    /** 同上,只有一个模型、只走另一套接口:照样一句「换接口类型」,不写「试了」,也不让人去开通。 */
+    @Test fun oneModelOnAnotherProtocolSaysToChangeTheInterfaceType() = runTest {
+        val url = "https://api.commandcode.ai/provider/v1"
+        listing[url] = ModelListResult.Ok(listOf(ListedModel("claude-sonnet-5-5", protocols = listOf(ModelProtocol.Messages))))
+        reply = { throw AssertionError("不该试调用:这个模型不走 OpenAI 兼容") }
+        val store = store()
+        val vm = vm(store)
+        vm.selectPreset(ProviderPresets.custom.label); vm.setBaseUrl(url); vm.setApiKey("sk"); vm.testAndSave(); runCurrent()
+        assertTrue("不该试调用", built.isEmpty())
+        assertEquals(
+            "服务商已连上，但「claude-sonnet-5-5」没测试通过：它不走你选的接口类型，请求到不了它。" +
+                "换一个这个接口类型到得了的模型，或者换接口类型。",
+            vm.state.value.probeNote,
+        )
+    }
+
+    /**
+     * 列表没写 `supported_endpoints`、排头的模型只走另一套接口:服务商回 400 unsupported_model。经适配器同一套错误映射,
+     * 这算那个模型的问题,接着试下一个,通过的当主模型,提示里带上服务商的原话。
+     */
+    @Test fun endpointMismatchOnTheFirstCandidateFallsBackToTheNext() = runTest {
+        val url = "https://relay.example.com/provider/v1"
+        listing[url] = ModelListResult.Ok(listOf(ListedModel("vendor/shape-a"), ListedModel("vendor/shape-b")))
+        val said = "Model 'vendor/shape-a' must be called via /provider/v1/messages."
+        reply = {
+            val m = built.last().first
+            if (m == "vendor/shape-a") {
+                throw ModelHttp.openAiError(400, null, """{"error":{"message":"$said","param":"model","code":"unsupported_model"}}""", m)
+            }
+            ModelReply(listOf(Part.ToolCall("c1", "get_time", "{}")), StopReason.ToolUse, null)
+        }
+        val store = store()
+        val vm = vm(store)
+        vm.selectPreset(ProviderPresets.custom.label); vm.setBaseUrl(url); vm.setApiKey("sk"); vm.testAndSave(); runCurrent()
+        assertEquals(listOf("vendor/shape-a", "vendor/shape-b"), built.map { it.first })
+        assertEquals("vendor/shape-b", store.configFor(ModelRole.Main)?.model)
+        assertEquals(
+            "先试的 vendor/shape-a 没测试通过：这个账号没开通或没权限用这个模型（服务商说：Model 'vendor/shape-a' must be called via /provider/v1/messages.）。" +
+                "主模型用了测试通过的「vendor/shape-b」。",
+            vm.state.value.probeNote,
+        )
+    }
+
+    /** 两样一起:写明不走当前接口类型的先筛掉、不试;剩下的第一个回接口不对的 400,接着试下一个。 */
+    @Test fun listedProtocolsFilterFirstThenEndpointMismatchFallsThrough() = runTest {
+        val url = "https://relay.example.com/provider/v1"
+        listing[url] = ModelListResult.Ok(listOf(
+            ListedModel("vendor/messages-only", protocols = listOf(ModelProtocol.Messages)),
+            ListedModel("vendor/unknown"),
+            ListedModel("vendor/chat", protocols = listOf(ModelProtocol.ChatCompletions)),
+        ))
+        reply = {
+            val m = built.last().first
+            if (m == "vendor/unknown") throw ModelHttp.openAiError(400, null, """{"error":{"code":"unsupported_model","param":"model"}}""", m)
+            ModelReply(listOf(Part.ToolCall("c1", "get_time", "{}")), StopReason.ToolUse, null)
+        }
+        val store = store()
+        val vm = vm(store)
+        vm.selectPreset(ProviderPresets.custom.label); vm.setBaseUrl(url); vm.setApiKey("sk"); vm.testAndSave(); runCurrent()
+        assertEquals("写明只走 /messages 的不试", listOf("vendor/unknown", "vendor/chat"), built.map { it.first })
+        assertEquals("vendor/chat", store.configFor(ModelRole.Main)?.model)
+    }
+
+    /**
+     * Key 的问题不能被当成「这个模型走不了这个接口」:401,或 403 说的是 Key 不能用这个接口,
+     * 第一个候选就挡住整次保存,给出真实原因,什么都不存。
+     */
+    @Test fun keyErrorsThatMentionTheEndpointStillBlockTheSave() = runTest {
+        val url = "https://relay.example.com/provider/v1"
+        for ((status, body) in listOf(
+            401 to """{"error":{"message":"Invalid API key","code":"unsupported_model"}}""",
+            403 to """{"error":{"message":"Your API key is not supported for this endpoint"}}""",
+        )) {
+            listing[url] = ModelListResult.Ok(listOf(ListedModel("vendor/a"), ListedModel("vendor/b")))
+            built.clear()
+            reply = { throw ModelHttp.openAiError(status, null, body, built.last().first) }
+            val store = store()
+            val vm = vm(store)
+            vm.selectPreset(ProviderPresets.custom.label); vm.setBaseUrl(url); vm.setApiKey("sk"); vm.testAndSave(); runCurrent()
+            assertEquals("HTTP $status:只试第一个", listOf("vendor/a"), built.map { it.first })
+            val failed = vm.state.value.form.test as ListState.Failed
+            assertTrue(failed.message, failed.message.contains("API Key 无效"))
+            assertTrue(store.providers.value.isEmpty())
+            assertNull(vm.state.value.pickToProbe)
+        }
     }
 
     /** 试的几个都是 5xx:多半整家不可用(地址对、但服务没起来),照旧不存。 */
@@ -597,7 +755,8 @@ class ModelSetupViewModelTest {
         vm.pick(ModelRole.Main, p.id, " qwen3 "); runCurrent()
         assertEquals("qwen3", store.configFor(ModelRole.Main)?.model)
         assertTrue(vm.state.value.canNext)
-        assertEquals(listOf("qwen3"), vm.state.value.options(vm.state.value.providers.single()).map { it.id })
+        // 手填过的 chatty 没当上主模型也记着,选的时候还在
+        assertEquals(listOf("qwen3", "chatty"), vm.state.value.options(vm.state.value.providers.single()).map { it.id })
     }
 
     @Test fun pickerListsProvidersWithoutRememberedListOnce() = runTest {
@@ -686,5 +845,200 @@ class ModelSetupViewModelTest {
         vm.selectPreset("DeepSeek")
         assertEquals("", vm.state.value.form.name)
         assertEquals("DeepSeek", vm.state.value.form.copy(name = "别的名字").providerName)
+    }
+
+    /**
+     * 手填模型名不看列表的结果:列得出(没有它)、列出空表、没有列表接口、Key 不对、服务端出错、回的不是 JSON,
+     * 都只用手填的那个试调用;试调用通了才存,记为手填。
+     */
+    private fun TestScope.typedModelIsProbedWhatever(listed: ModelListResult) {
+        val url = "https://relay.example.com/v1"
+        listing[url] = listed
+        val store = store()
+        val vm = vm(store)
+        vm.selectPreset(ProviderPresets.custom.label); vm.setBaseUrl(url); vm.setApiKey("k")
+        assertFalse("没点之前不显示模型名", vm.state.value.form.showModel)
+        vm.setManual(true)
+        assertTrue(vm.state.value.form.showModel)
+        vm.setModel(" plan-model ")
+        vm.testAndSave(); runCurrent()
+        assertEquals("只试手填的那个", listOf("plan-model"), built.map { it.first })
+        val p = store.providers.value.single()
+        assertEquals(setOf("plan-model"), p.verifiedModels)
+        assertEquals(setOf("plan-model"), p.typedModels)
+        assertEquals("plan-model", store.configFor(ModelRole.Main)?.model)
+        assertTrue(vm.state.value.options(p).single { it.id == "plan-model" }.typed)
+        assertFalse(vm.state.value.showForm)
+    }
+
+    @Test fun typedModelWithAListThatLacksIt() = runTest { typedModelIsProbedWhatever(deepseek) }
+    @Test fun typedModelWithAnEmptyList() = runTest { typedModelIsProbedWhatever(ModelListResult.Ok(emptyList())) }
+    @Test fun typedModelWithoutAListEndpoint() = runTest { typedModelIsProbedWhatever(ModelListResult.Failed(ListFailure.NotSupported)) }
+    @Test fun typedModelWhenListingSaysTheKeyIsWrong() = runTest { typedModelIsProbedWhatever(ModelListResult.Failed(ListFailure.Auth)) }
+    @Test fun typedModelWhenListingHitsAServerError() = runTest { typedModelIsProbedWhatever(ModelListResult.Failed(ListFailure.Server, "HTTP 500")) }
+    @Test fun typedModelWhenListingIsNotJson() = runTest { typedModelIsProbedWhatever(ModelListResult.Failed(ListFailure.BadResponse)) }
+
+    /** 列模型出错、没手填:照实说原因(Key 不对就说 Key 不对),展开模型名一栏,填了再测还是要试调用通过。 */
+    @Test fun listErrorShowsTheReasonAndOpensTheModelField() = runTest {
+        for ((i, failure) in listOf(ListFailure.Auth, ListFailure.Server, ListFailure.BadResponse).withIndex()) {
+            val url = "https://relay$i.example.com/v1"
+            listing[url] = ModelListResult.Failed(failure)
+            val store = store()
+            val vm = vm(store)
+            vm.selectPreset(ProviderPresets.custom.label); vm.setBaseUrl(url); vm.setApiKey("k")
+            vm.testAndSave(); runCurrent()
+            val f = vm.state.value.form
+            assertEquals(ListState.Failed(failure.text), f.test)
+            assertTrue("出错后可以手填", f.showModel)
+            assertTrue(store.providers.value.isEmpty())
+            // 试调用也说 Key 不对:不存
+            reply = { throw ModelError.Auth() }
+            vm.setModel("plan-model"); vm.testAndSave(); runCurrent()
+            assertTrue(vm.state.value.form.test is ListState.Failed)
+            assertTrue(store.providers.value.isEmpty())
+            reply = { ModelReply(listOf(Part.ToolCall("c1", "get_time", "{}")), StopReason.ToolUse, null) }
+            vm.closeForm()
+        }
+    }
+
+    /** 列表里就有手填的那个:只试它,不标手填。 */
+    @Test fun typedModelThatIsListedIsNotMarkedTyped() = runTest {
+        listing[deepseekUrl] = deepseek
+        val store = store()
+        val vm = vm(store)
+        vm.setApiKey("sk"); vm.setManual(true); vm.setModel("deepseek-reasoner"); vm.testAndSave(); runCurrent()
+        assertEquals(listOf("deepseek-reasoner"), built.map { it.first })
+        val p = store.providers.value.single()
+        assertEquals(emptySet<String>(), p.typedModels)
+        assertEquals("deepseek-reasoner", store.configFor(ModelRole.Main)?.model)
+        // 收起「手动填写」就不用填的那个
+        vm.openForm(); vm.setApiKey("sk"); vm.setManual(true); vm.setModel("x"); vm.setManual(false)
+        assertEquals("", vm.state.value.form.typedModel)
+    }
+
+    /** 选择页里有列表的那家也能手填;通了记为手填,刷新列表后还在,标「手填」。 */
+    @Test fun pickerAllowsTypingAModelForAListedProvider() = runTest {
+        val store = store()
+        val p = store.connect("DeepSeek", ProviderConfig.Kind.OpenAiCompat, deepseekUrl, "sk", deepseek.models)
+        val vm = vm(store)
+        runCurrent()
+        vm.pickManual(ModelRole.Light, p.id, "deepseek-v9"); runCurrent()
+        assertEquals(setOf("deepseek-v9"), store.provider(p.id)?.typedModels)
+        assertEquals("存进文件", setOf("deepseek-v9"), store().provider(p.id)?.typedModels)
+        store.rememberModels(p.id, deepseek.models)
+        vm.pick(ModelRole.Light, p.id, "deepseek-chat"); runCurrent()
+        val options = vm.state.value.options(store.provider(p.id)!!)
+        assertTrue(options.single { it.id == "deepseek-v9" }.typed)
+        assertFalse(options.single { it.id == "deepseek-chat" }.typed)
+        // 选列表里的不记为手填
+        vm.pickManual(ModelRole.Main, p.id, "deepseek-chat"); runCurrent()
+        assertEquals(setOf("deepseek-v9"), store.provider(p.id)?.typedModels)
+    }
+
+    // ---------- 不测试,直接保存 ----------
+
+    /** 一次网络都不打:不列模型、不试调用,只存下地址、Key 和「没测过」这件事。 */
+    @Test fun saveWithoutTestStoresProviderWithoutListingOrProbe() = runTest {
+        val store = store()
+        val vm = vm(store)
+        vm.setApiKey("sk-1"); vm.saveWithoutTest(); runCurrent()
+        assertTrue("一次列模型都没调", listCalls.isEmpty())
+        assertTrue("一次试调用都没有", built.isEmpty())
+        val p = store.providers.value.single()
+        assertEquals("DeepSeek", p.name)
+        assertEquals("sk-1", store.providerKey(p.id))
+        assertEquals(emptyList<ListedModel>(), p.models)
+        assertEquals(emptySet<String>(), p.verifiedModels)
+        assertTrue("标成没测过", p.savedUntested)
+        // 存进文件也在
+        assertTrue(store().provider(p.id)!!.savedUntested)
+        // 没有主模型:留给用户去选(选的时候先试调用)
+        assertNull(store.roles.value.main)
+        val s = vm.state.value
+        assertEquals(p.id, s.pickToProbe)
+        assertFalse("保存后表单收起", s.showForm)
+        assertEquals("", s.form.apiKey)
+        assertEquals(ListState.Idle, s.form.test)
+        assertTrue("存好后说清它没测过", s.probeNote?.contains(p.name) == true)
+    }
+
+    /** 手填了模型名:只记为手填,不自动当主模型;选它当主模型时先试调用,通了才用。 */
+    @Test fun saveWithoutTestWithTypedModelDoesNotBecomeMainUntilProbed() = runTest {
+        val store = store()
+        val vm = vm(store)
+        vm.setApiKey("sk"); vm.setManual(true); vm.setModel("deepseek-v9")
+        vm.saveWithoutTest(); runCurrent()
+        assertTrue(built.isEmpty())
+        assertTrue(listCalls.isEmpty())
+        val p = store.providers.value.single()
+        assertEquals(setOf("deepseek-v9"), p.typedModels)
+        assertEquals(emptySet<String>(), p.verifiedModels)
+        assertTrue(p.savedUntested)
+        assertNull("没测过的模型不自动当主模型", store.roles.value.main)
+        assertTrue(store.list().isEmpty())
+        assertEquals(p.id, vm.state.value.pickToProbe)
+        // 重开设置(界面状态没了)也一样:跳过测试存下的那家选主模型先试调用
+        val again = vm(store)
+        runCurrent()
+        assertNull(again.state.value.pickToProbe)
+        assertTrue(again.state.value.probeBeforePick(ModelRole.Main, p.id))
+        assertFalse(again.state.value.probeBeforePick(ModelRole.Light, p.id))
+        again.pickManual(ModelRole.Main, p.id, "deepseek-v9"); runCurrent()
+        assertEquals(listOf("deepseek-v9"), built.map { it.first })
+        assertEquals("deepseek-v9", store.configFor(ModelRole.Main)?.model)
+        assertFalse("试通过了就不算没测过", store.provider(p.id)!!.savedUntested)
+        assertFalse(again.state.value.probeBeforePick(ModelRole.Main, p.id))
+    }
+
+    /** 已经有主模型时跳过测试存下另一家:主模型不变。 */
+    @Test fun saveWithoutTestKeepsTheCurrentMainModel() = runTest {
+        listing[deepseekUrl] = deepseek
+        val store = store()
+        val vm = vm(store)
+        vm.setApiKey("sk-1"); vm.testAndSave(); runCurrent()
+        val main = store.configFor(ModelRole.Main)
+        assertEquals("deepseek-chat", main?.model)
+        vm.openForm(); vm.selectPreset(ProviderPresets.custom.label)
+        vm.setBaseUrl("http://127.0.0.1:11434/v1"); vm.setManual(true); vm.setModel("local-model")
+        vm.saveWithoutTest(); runCurrent()
+        assertEquals(main, store.configFor(ModelRole.Main))
+        assertNull(vm.state.value.pickToProbe)
+    }
+
+    /** 地址格式不对、或该填 Key 的没填,什么都不存。 */
+    @Test fun saveWithoutTestRefusesAnInvalidForm() = runTest {
+        val store = store()
+        val vm = vm(store)
+        assertFalse("还没填 Key", vm.state.value.form.canSaveUntested)
+        vm.saveWithoutTest(); runCurrent()
+        assertTrue(store.providers.value.isEmpty())
+        vm.selectPreset(ProviderPresets.custom.label)
+        vm.setBaseUrl("api.deepseek.com")
+        vm.setApiKey("sk")
+        assertFalse("地址没写协议", vm.state.value.form.canSaveUntested)
+        vm.saveWithoutTest(); runCurrent()
+        assertTrue(store.providers.value.isEmpty())
+        // 自己跑的服务不要 Key,可以存
+        vm.setBaseUrl("http://127.0.0.1:11434/v1")
+        vm.setApiKey("")
+        assertTrue(vm.state.value.form.canSaveUntested)
+    }
+
+    /** 已经测过的那家再跳过测试存一次:服务商不重复,Key 换成新的,已核实过的模型留着。 */
+    @Test fun saveWithoutTestKeepsExistingProviderAndItsVerifiedModels() = runTest {
+        listing[deepseekUrl] = deepseek
+        val store = store()
+        val vm = vm(store)
+        vm.setApiKey("sk-1"); vm.testAndSave(); runCurrent()
+        val p = store.providers.value.single()
+        assertEquals(setOf("deepseek-chat"), p.verifiedModels)
+        assertFalse(p.savedUntested)
+        vm.openForm(); vm.setApiKey("sk-2"); vm.saveWithoutTest(); runCurrent()
+        assertEquals("不重复添加", 1, store.providers.value.size)
+        val after = store.provider(p.id)!!
+        assertEquals("sk-2", store.providerKey(p.id))
+        assertEquals("列过的列表留着", listOf("deepseek-chat", "deepseek-reasoner", "deepseek-coder"), after.models!!.map { it.id })
+        assertEquals(setOf("deepseek-chat"), after.verifiedModels)
+        assertFalse("核实过的模型让这家不算没测过", after.savedUntested)
     }
 }

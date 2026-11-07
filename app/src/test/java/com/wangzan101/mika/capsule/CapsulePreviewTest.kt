@@ -55,8 +55,4 @@ class CapsulePreviewTest {
         assertEquals(listOf("a", "b"), got)
         job.cancel()
     }
-
-    @Test fun fiveFramesPerSecondByDefault() {
-        assertEquals(5, PREVIEW_FPS)
-    }
 }

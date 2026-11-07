@@ -4,6 +4,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -175,9 +177,11 @@ class RecoveryPermissions(
         failure ?: PermissionResult.Done
     }
 
-    /** 一直看着内置助手的状态:每次变成运行中(连接刚可用)就 [applyPending]。 */
-    suspend fun applyWhenRunning(status: Flow<BuiltinShellStatus>) {
-        status.collect { if (it == BuiltinShellStatus.Running) applyPending() }
+    /** 一直看着内置助手的状态:每次变成运行中(连接刚可用)就 [applyPending];明确退出期间不动系统设置。 */
+    suspend fun applyWhenRunning(status: Flow<BuiltinShellStatus>, active: Flow<Boolean> = flowOf(true)) {
+        combine(status, active, ::Pair).collect { (state, allowed) ->
+            if (allowed && state == BuiltinShellStatus.Running) applyPending()
+        }
     }
 
     /**
@@ -198,7 +202,7 @@ class RecoveryPermissions(
     /**
      * 让 Mika 的无障碍服务重新运行起来(服务没在运行时用,见 [AccessibilityRepair]),别的服务一个不动:
      * 列表里没有 Mika 就直接加上;有却没绑定,就先去掉,等 [gapMs] 让系统处理完,再重读列表加回去。
-     * 去掉之后一定会加回去,中途被取消也一样,免得把服务留在关着的状态。不改 [RecoveryConsent]:这不是打开或收回能力。
+     * 去掉之后一定会加回去,中途被取消也一样,免得把服务留在关着的状态;加回失败时写回原来的列表,仍报失败。不改 [RecoveryConsent]:这不是打开或收回能力。
      */
     suspend fun restartAccessibility(gapMs: Long): PermissionResult = lock.withLock {
         val shell = runner() ?: return@withLock PermissionResult.NoRunner
@@ -212,7 +216,12 @@ class RecoveryPermissions(
             withContext(NonCancellable) {
                 delay(gapMs)
                 val now = shell.exec(PermissionCommands.READ_ACCESSIBILITY)
-                runAll(shell, PermissionCommands.writeAccessibility(AccessibilityList.with(now, me)))
+                val back = runAll(shell, PermissionCommands.writeAccessibility(AccessibilityList.with(now, me)))
+                // 加回失败时把原来的列表(连同总开关)写回:宁可回到「有却没绑定」,也不让 Mika 从列表里消失;
+                // 写回只是兜底,这次仍按加回失败报
+                // (读到的原样带着换行;它本来就有 Mika,with 只把它整理成干净的列表,内容不变)
+                if (back != PermissionResult.Done) runCatching { runAll(shell, PermissionCommands.writeAccessibility(AccessibilityList.with(current, me))) }
+                back
             }
         } catch (e: CancellationException) {
             throw e

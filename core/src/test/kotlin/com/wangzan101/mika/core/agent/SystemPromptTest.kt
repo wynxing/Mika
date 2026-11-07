@@ -6,6 +6,9 @@ import com.wangzan101.mika.core.model.StopReason
 import com.wangzan101.mika.core.cap.sandbox.FakeSandbox
 import com.wangzan101.mika.core.cap.sandbox.SandboxStatus
 import com.wangzan101.mika.core.tool.FakeScreen
+import com.wangzan101.mika.core.access.AppAccessPolicy
+import com.wangzan101.mika.core.access.AppAccessState
+import com.wangzan101.mika.core.uistate.AppAccessScreenPort
 import com.wangzan101.mika.core.tool.ToolDispatcher
 import com.wangzan101.mika.core.cap.web.FakeWebPort
 import kotlinx.coroutines.runBlocking
@@ -204,7 +207,10 @@ class SystemPromptAssemblyTest {
             toolDispatcher(FakeScreen(), web = FakeWebPort(), sandbox = FakeSandbox(SandboxStatus.Ready(network = true)), workspace = { "w" }) to SpeedFlags.OFF
         },
         "phone-sandbox-preparing" to { toolDispatcher(FakeScreen(), sandbox = FakeSandbox(SandboxStatus.NotInstalled), workspace = { "w" }) to SpeedFlags.OFF },
+        "phone-app-access" to { toolDispatcher(accessScreen(AppAccessState(blocked = setOf("com.bank")))) to SpeedFlags.OFF },
     )
+
+    private fun accessScreen(state: AppAccessState) = AppAccessScreenPort(FakeScreen(), AppAccessPolicy { state }, packages = { emptyList() })
 
     @Test fun goldenPerCapabilityCombination() {
         val update = System.getenv("UPDATE_GOLDEN") == "1"
@@ -236,6 +242,15 @@ class SystemPromptAssemblyTest {
             for (section in SECTION_TOOLS.keys + "handover") assertFalse("$name collapsed: $section", SystemPrompt.read(section).lineSequence().first() in collapsed)
             assertTrue(name, SystemPrompt.read("groups").lineSequence().first() in collapsed)
         }
+    }
+
+    /** 应用访问的规则只在用户禁用了 App(或设置读不出来)时才进系统提示词;名单为空时一个字都不多。 */
+    @Test fun appAccessRuleOnlyWhenAppsAreBlocked() {
+        val rule = SystemPrompt.read("app-access")
+        assertFalse(promptOf(toolDispatcher(FakeScreen())).contains(rule))
+        assertFalse(promptOf(toolDispatcher(accessScreen(AppAccessState()))).contains(rule))
+        assertTrue(promptOf(toolDispatcher(accessScreen(AppAccessState(blocked = setOf("com.bank"))))).contains(rule))
+        assertTrue(promptOf(toolDispatcher(accessScreen(AppAccessState(available = false)))).contains(rule))
     }
 
     @Test fun sandboxSectionFollowsToolAvailability() {

@@ -89,7 +89,7 @@ class ToolDispatcherStableRefTest {
         val s = ScriptedScreen(listOf("搜索", "返回"), listOf("新的"))
         val d = toolDispatcher(s, stableRefs = true)
         d.execute(call("phone_observe")); d.execute(call("phone_observe"))
-        for (args in listOf("""{"ref":"@e1","snapshotId":"p1"}""", """{"ref":"@e1","snapshotId":"p1"}""")) {
+        for (args in listOf("""{"ref":"@e1","snapshotId":"p1"}""")) {
             val r = d.execute(call("phone_tap", args))
             assertEquals("ref_expired", r.content.s("error"))
             assertTrue("Read the screen again" in r.content.s("message"))

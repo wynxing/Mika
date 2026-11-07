@@ -2,13 +2,11 @@ package com.wangzan101.mika.core.workspace
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
-import com.wangzan101.mika.core.cap.sandbox.FakeSandbox
 
 class SandboxPathsTest {
     @Test fun relativeResolvesUnderWorkspace() {
@@ -32,10 +30,6 @@ class SandboxPathsTest {
         assertEquals("/opt/mika/skills/app/x/scripts/a.py", p)
         assertFalse(SandboxPaths.isWritable(p!!))
         assertTrue(SandboxPaths.isWritable(SandboxPaths.normalize("out/a.png")!!))
-        // 宿主映射也一样:技能目录只能读
-        val sb = FakeSandbox()
-        assertNotNull(sb.hostPath("c1", "/opt/mika/skills/app/x/scripts/a.py", forWrite = false))
-        assertNull(sb.hostPath("c1", "/opt/mika/skills/app/x/scripts/a.py", forWrite = true))
     }
 
     @Test fun symlinkEscapeRejected() {

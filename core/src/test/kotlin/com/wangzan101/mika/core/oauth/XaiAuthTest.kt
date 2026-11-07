@@ -12,17 +12,20 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.net.InetAddress
 import java.util.Base64
 
 class XaiAuthTest {
     private lateinit var server: MockWebServer
     private val http = OkHttpClient()
 
-    @Before fun setUp() { server = MockWebServer().also { it.start() } }
+    // 绑到 127.0.0.1 并用它拼地址:MockWebServer 默认按本机主机名起服务,有的机器(localhost 被 VPN 改写过)
+    // 解析出的名字不是 localhost,OauthUrls 只放行 https 和本机地址,主机核对就会拒掉它自己的地址
+    @Before fun setUp() { server = MockWebServer().also { it.start(InetAddress.getByName("127.0.0.1"), 0) } }
     @After fun tearDown() { server.shutdown() }
 
-    private val origin get() = server.url("/").toString().trimEnd('/')
-    private val host get() = server.hostName
+    private val origin get() = "http://127.0.0.1:${server.port}"
+    private val host get() = "127.0.0.1"
 
     private fun json(code: Int = 200, body: String) =
         MockResponse().setResponseCode(code).setHeader("Content-Type", "application/json").setBody(body)

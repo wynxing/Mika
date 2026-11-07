@@ -8,11 +8,58 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import com.wangzan101.mika.settings.AccessibilityState
 import com.wangzan101.mika.settings.Problem
 import org.junit.Test
 
 class StatusCopyTest {
     @get:Rule val texts = ChineseTexts()
+
+    // 频道设置页打不开时依次退回,第一个能开的就停
+    @Test
+    fun firstThatStartsFallsBack() {
+        val tried = mutableListOf<String>()
+        assertTrue(firstThatStarts(listOf("channel", "app")) { tried += it; it == "app" })
+        assertEquals(listOf("channel", "app"), tried)
+        tried.clear()
+        assertTrue(firstThatStarts(listOf("channel", "app")) { tried += it; true })
+        assertEquals(listOf("channel"), tried)
+        assertFalse(firstThatStarts(listOf("channel", "app")) { false })
+    }
+
+    @Test
+    fun unavailableAccessibilityDistinguishesEnabledFromOff() {
+        assertEquals("Mika 的无障碍服务没有开启:请在系统设置的无障碍里打开 Mika。", StatusCopy.accessibilityUnavailable(enabled = false))
+        val enabled = StatusCopy.accessibilityUnavailable(enabled = true)
+        assertTrue(enabled.contains("已开启"))
+        assertTrue(enabled.contains("关闭后重新开启"))
+        assertTrue(enabled.contains("允许受限制的设置"))
+        assertFalse(enabled.contains("没有开启"))
+    }
+
+    @Test
+    fun restrictedAccessibilityPointsToAppInfoInsteadOfOnlyToggling() {
+        val p = Problem.Accessibility(AccessibilityState.EnabledNotRunning, restrictedSettings = true)
+        assertTrue(StatusCopy.banner(p).detail.contains("允许受限制的设置"))
+        val e = StatusCopy.explain(p, "14")
+        assertEquals(Fix.OpenAppInfo, e.fix)
+        assertTrue(e.body.contains("应用信息"))
+        assertTrue(e.body.contains("允许受限制的设置"))
+    }
+
+    @Test
+    fun lockedAccessibilityKeepsTheUnlockGuidanceEvenWhenRestricted() {
+        val p = Problem.Accessibility(
+            AccessibilityState.EnabledNotRunning,
+            userLocked = true,
+            restrictedSettings = true,
+        )
+        assertTrue(StatusCopy.banner(p).detail.contains("解锁一次"))
+        val e = StatusCopy.explain(p, "14")
+        assertNull(e.fix)
+        assertNull(e.action)
+        assertTrue(e.body.contains("解锁一次"))
+    }
 
     @Test
     fun paymentLinesOnePerField() {
@@ -26,6 +73,7 @@ class StatusCopyTest {
     fun replayAndBatchCopy() {
         assertEquals("按以往的做法快速执行中(第 2/5 步)", StatusCopy.progress(RunProgress.Replay(2, 5)))
         assertEquals("一次执行 3 步", StatusCopy.progress(RunProgress.Batch(3)))
+        assertEquals("已收集 · 12/36 · 2026-10-31", StatusCopy.progress(RunProgress.Task("已收集", 12, 36, "2026-10-31")))
 
         val ex = Exchange("查电量", emptyList(), ExchangeStatus.Working, live = true)
         val replaying = ChatViewModel.reduce(ex, TaskState.Running(0, "按以往的做法操作", progress = RunProgress.Replay(2, 5)))
@@ -60,17 +108,5 @@ class StatusCopyTest {
         val e = StatusCopy.explain(resultOnly, "14")
         assertEquals("去打开", e.action)
         assertEquals(Fix.OpenResultChannel, e.fix)
-    }
-
-    // 频道设置页打不开时依次退回,第一个能开的就停
-    @Test
-    fun firstThatStartsFallsBack() {
-        val tried = mutableListOf<String>()
-        assertTrue(firstThatStarts(listOf("channel", "app")) { tried += it; it == "app" })
-        assertEquals(listOf("channel", "app"), tried)
-        tried.clear()
-        assertTrue(firstThatStarts(listOf("channel", "app")) { tried += it; true })
-        assertEquals(listOf("channel"), tried)
-        assertFalse(firstThatStarts(listOf("channel", "app")) { false })
     }
 }

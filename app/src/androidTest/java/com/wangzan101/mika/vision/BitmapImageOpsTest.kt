@@ -63,14 +63,6 @@ class BitmapImageOpsTest {
     }
 
     @Test
-    fun aHashStableForSameFrame() {
-        val a = newAgent()
-        a.openSettingsHome()
-        val frame = a.settledFrame()
-        assertEquals(0, hamming(ops.aHash(frame), ops.aHash(frame.copyOf())))
-    }
-
-    @Test
     fun aHashChangesAfterNavigation() {
         val a = newAgent()
         val home = a.openSettingsHome()

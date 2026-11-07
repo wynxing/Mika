@@ -88,7 +88,7 @@ class StructuredCompactionTest {
 
     @Test fun calibratedEstimateDecidesWhenToCompact() {
         val h = head + taps(20)
-        val context = (TokenEstimate.of(h) / ContextCompressor.COMPACT_AT).toInt() + 10
+        val context = windowFor(uncalibrated(h))
         val c = ContextCompressor(TOOLS)
         assertEquals(h, c.compress(h, context).messages)
         // 服务商报的比粗估多一倍:同样的历史按校准后的估算已越过触发点,压缩一次
@@ -98,7 +98,7 @@ class StructuredCompactionTest {
 
     @Test fun compactionIsStickyForTheTask() {
         val all = head + taps(20)
-        val context = (TokenEstimate.of(all) / ContextCompressor.COMPACT_AT).toInt() + 10
+        val context = windowFor(uncalibrated(all))
         val c = ContextCompressor(TOOLS)
         assertTrue(c.compress(all, context, fixedOverhead = 100).foldedSteps > 0)
         // 回到触发点以下仍接着用压缩的结果;新的实例(新任务)从原样起

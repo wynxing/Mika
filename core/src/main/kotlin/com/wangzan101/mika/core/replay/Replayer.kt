@@ -95,6 +95,12 @@ class Replayer(
                     }
                     "target_unresolved" -> return diverged("cannot tell which element the tap would hit", seen)
                     "own_app" -> return diverged("it acts on Mika itself", seen)
+                    // #217:非 Ui/无人值守来源回放到付款步,审批策略自动拒绝——这轮永远等
+                    // 不来同意,不是「等确认」,交还模型向用户说明后按未完成收尾。
+                    "approval_unavailable" -> return diverged(
+                        "this run cannot get approval for a payment step", seen,
+                        error = "approval_unavailable",
+                    )
                     else -> error("unexpected refusal ${o.code}")
                 }
                 is ActionOutcome.Cancelled -> return diverged("cancelled", seen)
@@ -173,6 +179,7 @@ class Replayer(
         /** 这些错误在动作执行之前就拒了,界面没被动过。 */
         private val NOT_EXECUTED = setOf(
             "invalid_arguments", "unknown_tool", "invalid_link", "link_unresolved", "ref_expired", "app_in_use_by_other_task",
+            "app_wait_would_deadlock", "app_wait_timed_out",
             "app_in_use_by_user", "app_not_found", "no_app_open", "confirmation_required", "batch_stopped",
         )
 

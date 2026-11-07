@@ -46,7 +46,7 @@ class ChangeWaitTest {
         // 普通翻页:事件持续到 100 ms,控件树和画面都变了
         val f = Fake(frameAt = { t -> if (t < 100) before else after }, lastEventAt = { t -> minOf(t, 100) }, treeChangedAt = 50)
         assertTrue(f.run(before))
-        assertTrue("returned at ${f.now}", f.now in 500L..520L)
+        assertTrue("returned at ${f.now}", f.now in 100 + ChangeWait.QUIET_MS..100 + ChangeWait.QUIET_MS + ChangeWait.POLL_MS)
     }
 
     @Test fun neverStillPageWithTreeChangeReturnsFast() = runTest {

@@ -3,6 +3,9 @@ package com.wangzan101.mika.voice
 import android.content.Context
 import android.content.SharedPreferences
 import com.wangzan101.mika.settings.FeatureFlags
+import com.wangzan101.mika.settings.KeyCipher
+import com.wangzan101.mika.settings.KeystoreKeyCipher
+import java.util.Base64
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +30,9 @@ sealed interface SpeechChoice {
 
     /** 用某个服务商的某个模型转写,[method] 决定请求怎么发。 */
     data class Provider(val providerId: String, val model: String, val method: TranscribeMethod) : SpeechChoice
+
+    /** Native streaming ASR, with credentials stored separately from this non-secret selection. */
+    data class Doubao(val resourceId: String = "volc.seedasr.sauc.duration") : SpeechChoice
 }
 
 /**
@@ -44,9 +50,40 @@ enum class TranscribeMethod { AudioTranscriptions, ChatInputAudio, GeminiInline,
  * (一次卡住多半是识别服务冷启动慢,不该从此关掉这条路);中间任何一次回了话就重新数。
  * 用户在设置里选「自动」或「手机自带」时记号和次数都清掉,好让换了识别服务、更新过系统的手机能再试。
  */
-class SpeechSettings(private val prefs: SharedPreferences) {
+class SpeechSettings(private val prefs: SharedPreferences, private val cipher: KeyCipher = KeystoreKeyCipher("mika-speech-keys")) {
     private val _choice = MutableStateFlow(read())
     val choice: StateFlow<SpeechChoice> = _choice.asStateFlow()
+
+    val hasDoubaoCredentials: Boolean get() = prefs.contains(DOUBAO_KEY)
+
+    /** Save without making a billable network request. Both authentication generations are supported. */
+    internal fun saveDoubao(credentials: DoubaoCredentials, resourceId: String) {
+        require(credentials.valid && resourceId in DoubaoProtocol.resources)
+        val json = buildJsonObject {
+            put("apiKey", JsonPrimitive(credentials.apiKey))
+            put("appId", JsonPrimitive(credentials.appId))
+            put("accessKey", JsonPrimitive(credentials.accessKey))
+        }.toString().toByteArray(Charsets.UTF_8)
+        val encrypted = Base64.getEncoder().encodeToString(cipher.encrypt(json))
+        val selected = SpeechChoice.Doubao(resourceId)
+        prefs.edit().putString(DOUBAO_KEY, encrypted).putString(KEY, encode(selected).toString()).apply()
+        _choice.value = selected
+    }
+
+    internal fun doubaoCredentials(): DoubaoCredentials? = runCatching {
+        val encrypted = prefs.getString(DOUBAO_KEY, null) ?: return null
+        val obj = Json.parseToJsonElement(String(cipher.decrypt(Base64.getDecoder().decode(encrypted)), Charsets.UTF_8)).jsonObject
+        DoubaoCredentials(
+            obj["apiKey"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            obj["appId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            obj["accessKey"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        ).takeIf { it.valid }
+    }.getOrNull()
+
+    fun clearDoubao() {
+        prefs.edit().remove(DOUBAO_KEY).apply()
+        if (_choice.value is SpeechChoice.Doubao) set(SpeechChoice.Off)
+    }
 
     private val _systemSilent = MutableStateFlow(prefs.getBoolean(SILENT, false))
     val systemSilent: StateFlow<Boolean> = _systemSilent.asStateFlow()
@@ -70,9 +107,22 @@ class SpeechSettings(private val prefs: SharedPreferences) {
         if (strikes >= SILENT_STRIKES) _systemSilent.value = true
     }
 
-    /** 手机自带识别这次回了话:之前没响应的次数作废。 */
-    fun noteSystemAnswered() {
-        if (prefs.getInt(STRIKES, 0) != 0) prefs.edit().remove(STRIKES).apply()
+    /**
+     * 点名试通过的识别服务(系统默认的不回话、它回了),下次先试它;null 是没有,或者系统默认的就回话。
+     * 见 [SystemSpeech.attempts]。
+     */
+    val systemService: String? get() = prefs.getString(SERVICE, null)
+
+    /** 手机自带识别这次回了话([service] 是回话的那个,null 是系统默认的):之前没响应的次数作废,记住回话的服务。 */
+    fun noteSystemAnswered(service: String? = null) {
+        val edit = prefs.edit()
+        var changed = false
+        if (prefs.getInt(STRIKES, 0) != 0) { edit.remove(STRIKES); changed = true }
+        if (service != systemService) {
+            if (service == null) edit.remove(SERVICE) else edit.putString(SERVICE, service)
+            changed = true
+        }
+        if (changed) edit.apply()
     }
 
     private fun read(): SpeechChoice {
@@ -85,6 +135,10 @@ class SpeechSettings(private val prefs: SharedPreferences) {
             SpeechChoice.Auto -> put(TYPE, JsonPrimitive("auto"))
             SpeechChoice.System -> put(TYPE, JsonPrimitive("system"))
             SpeechChoice.Off -> put(TYPE, JsonPrimitive("off"))
+            is SpeechChoice.Doubao -> {
+                put(TYPE, JsonPrimitive("doubao"))
+                put("resourceId", JsonPrimitive(choice.resourceId))
+            }
             is SpeechChoice.Provider -> {
                 put(TYPE, JsonPrimitive("provider"))
                 put("providerId", JsonPrimitive(choice.providerId))
@@ -99,6 +153,8 @@ class SpeechSettings(private val prefs: SharedPreferences) {
         "auto" -> SpeechChoice.Auto
         "system" -> SpeechChoice.System
         "off" -> SpeechChoice.Off
+        "doubao" -> obj["resourceId"]?.jsonPrimitive?.contentOrNull
+            ?.takeIf { it in DoubaoProtocol.resources }?.let { SpeechChoice.Doubao(it) }
         "provider" -> {
             val id = obj["providerId"]?.jsonPrimitive?.contentOrNull
             val model = obj["model"]?.jsonPrimitive?.contentOrNull
@@ -110,9 +166,11 @@ class SpeechSettings(private val prefs: SharedPreferences) {
 
     companion object {
         private const val KEY = "speech_choice"
+        private const val DOUBAO_KEY = "speech_doubao_credentials_encrypted"
         private const val TYPE = "type"
         private const val SILENT = "speech_system_silent"
         private const val STRIKES = "speech_system_silent_strikes"
+        private const val SERVICE = "speech_system_service"
 
         /** 连着这么多次不响应才记下。 */
         const val SILENT_STRIKES = 2

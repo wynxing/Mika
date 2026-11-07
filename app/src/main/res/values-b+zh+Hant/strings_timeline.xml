@@ -42,6 +42,10 @@
     <string name="err_payment">付款要你來</string>
     <string name="err_no_evidence">結果缺少依據</string>
     <string name="err_double_click">不支援雙擊</string>
+    <string name="err_app_blocked">應用已被禁用</string>
+    <string name="err_app_unverified">無法確認是哪個應用</string>
+    <string name="err_app_unavailable">應用訪問設定不可用</string>
+    <string name="err_app_protected">受保護的應用不能自動操作</string>
     <string name="verify_passed">核查通過</string>
     <string name="verify_unverified">沒能核實</string>
     <string name="verify_none">沒有核查</string>
@@ -79,4 +83,11 @@
     <string name="timeline_hide_screen">收起畫面</string>
     <string name="timeline_show_screen">看當時的畫面</string>
     <string name="timeline_step_screen">第 %1$d 步的畫面</string>
+    <string name="timeline_export">匯出用量記錄</string>
+    <string name="timeline_export_hint">將每次模型回覆的 Token 用量、快取命中和上下文壓縮事件儲存為 JSONL。</string>
+    <string name="timeline_exported">已儲存用量記錄</string>
+    <string name="timeline_export_failed">無法匯出用量記錄，請檢查記錄是否仍在、所選位置能否寫入。</string>
+    <string name="timeline_running">進行中</string>
+    <string name="timeline_step_limit">步數</string>
+    <string name="timeline_step_limit_value">%1$d / %2$d</string>
 </resources>

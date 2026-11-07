@@ -64,6 +64,8 @@ class McpTaskToolsTest {
     }
 
     @Test fun runTaskValidatesArguments() = runTest {
+        rejects(McpTaskTools.RUN, args("goal" to "hi", "request_id" to null), "request_id")
+        rejects(McpTaskTools.RUN, args("goal" to "hi", "request_id" to "not-a-uuid"), "request_id")
         rejects(McpTaskTools.RUN, args(), "goal")
         rejects(McpTaskTools.RUN, args("goal" to "   "), "goal")
         rejects(McpTaskTools.RUN, args("goal" to 5), "goal must be a string")
@@ -100,6 +102,10 @@ class McpTaskToolsTest {
             assertEquals("running", it.str("status")); assertEquals("Opening About phone", it.str("progress")); assertEquals("3", it.str("step"))
         }
         assertEquals("paused", status(TaskState.Held(GateReason("waiting_unlock"))).str("status"))
+        // 排在开始队列里的不是暂停:报 queued,点继续也不会开始
+        status(TaskState.Held(GateReason.queued("Queued: 1 task ahead"))).let {
+            assertEquals("queued", it.str("status")); assertEquals("queued", it.str("waiting_for")); assertEquals("Queued: 1 task ahead", it.str("progress"))
+        }
         assertEquals("waiting_on_phone", status(TaskState.Held(GateReason("waiting_user", "Pick the app", needsYou = true))).str("status"))
         status(TaskState.WaitingInput("Which account?", listOf("Work", "Home"))).let {
             assertEquals("waiting_for_answer", it.str("status"))

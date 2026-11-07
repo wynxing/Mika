@@ -15,6 +15,7 @@
     <string name="tool_check_dialog">Check for dialogs</string>
     <string name="tool_gesture">Multi-touch gesture</string>
     <string name="tool_shell">System command</string>
+    <string name="tool_root">Root command</string>
     <string name="tool_find_element">Find on screen</string>
     <string name="tool_collect">Collect across screens</string>
     <string name="tool_phone_run">Several phone actions</string>
@@ -28,6 +29,7 @@
     <string name="tool_switch_tab">Switch tab</string>
     <string name="tool_switch_version">Switch page version</string>
     <string name="tool_keep_page">Keep page open</string>
+    <string name="tool_app_after_task">Choose whether the app stays open afterwards</string>
     <string name="tool_read_page">Read web page</string>
     <string name="tool_downloads">Check downloads</string>
     <string name="tool_network">Check page network data</string>
@@ -40,6 +42,8 @@
     <string name="tool_find_skill">Look up skills</string>
     <string name="tool_read_knowledge">Read app/site knowledge</string>
     <string name="tool_read_skill">Read skill</string>
+    <string name="tool_list_settings">Read settings</string>
+    <string name="tool_set_setting">Change a setting</string>
     <string name="tool_save_skill">Save skill</string>
     <string name="tool_explain_failure">Explain why it didn’t work</string>
     <string name="tool_ask_user">Ask you a question</string>

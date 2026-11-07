@@ -21,6 +21,9 @@
     <string name="voice_busy">辨識服務正忙，稍後再按住說</string>
     <string name="voice_network">網路斷了，沒能轉成文字</string>
     <string name="voice_mic_unavailable">麥克風用不了，可能正被別的 App 佔著</string>
+    <string name="voice_hold_to_talk">按住說話</string>
+    <string name="voice_mic_blocked_title">麥克風還是用不了</string>
+    <string name="voice_mic_blocked_body">已經允許 Mika 錄音，但還是錄不到聲音。看看快速設定裡的「麥克風存取權」開關有沒有關（Android 12 起有），再到系統的權限管理裡看 Mika 的麥克風有沒有被單獨關掉；也可能正被別的應用程式佔用。</string>
     <string name="voice_provider_failed">沒能轉成文字：%1$s</string>
     <string name="voice_unavailable_title">還不能語音輸入</string>
     <string name="voice_unavailable_no_engine">這臺手機沒有自帶的語音辨識，也還沒選轉文字的模型。到「設定 › 模型 › 語音轉文字」選一個服務商的語音模型就能用。</string>

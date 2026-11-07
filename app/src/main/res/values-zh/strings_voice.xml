@@ -21,6 +21,9 @@
     <string name="voice_busy">识别服务正忙，稍后再按住说</string>
     <string name="voice_network">网络断了，没能转成文字</string>
     <string name="voice_mic_unavailable">麦克风用不了，可能正被别的 App 占着</string>
+    <string name="voice_hold_to_talk">按住说话</string>
+    <string name="voice_mic_blocked_title">麦克风还是用不了</string>
+    <string name="voice_mic_blocked_body">已经允许 Mika 录音，但还是录不到声音。看看快捷设置里的「麦克风使用权限」开关有没有关（安卓 12 起有），再到系统的权限管理里看 Mika 的麦克风有没有被单独关掉；也可能正被别的应用占用。</string>
     <string name="voice_provider_failed">没能转成文字：%1$s</string>
     <string name="voice_unavailable_title">还不能语音输入</string>
     <string name="voice_unavailable_no_engine">这台手机没有自带的语音识别，也还没选转文字的模型。到「设置 › 模型 › 语音转文字」选一个服务商的语音模型就能用。</string>

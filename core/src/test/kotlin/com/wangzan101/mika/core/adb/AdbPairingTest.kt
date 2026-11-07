@@ -9,6 +9,8 @@ import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.math.BigInteger
+import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -61,6 +63,26 @@ class AdbPairingTest {
     }
 
     @Test
+    fun pairingUsesTheVerifiedMappedLoopbackAddress() {
+        FakePairingServer("123456").use { server ->
+            val peer = AdbPairing(client).pair(" [::ffff:127.0.0.1] ", server.port, "123456")
+            server.join()
+            assertNull(server.error)
+            assertEquals("adb-FAKE0001-abc123", peer.data)
+        }
+    }
+
+    @Test
+    fun pairingRejectsHostileLookalikeHostsBeforeConnecting() {
+        for (host in listOf("127.evil.com", "127.0.0.1.example.com", "localhost.example.com")) {
+            val e = assertThrows(host, AdbPairingException::class.java) {
+                AdbPairing(client).pair(host, 5555, "123456", timeoutMs = 50)
+            }
+            assertEquals(host, AdbPairingException.Reason.NOT_LOCAL, e.reason)
+        }
+    }
+
+    @Test
     fun connectFailureIsReported() {
         val port = ServerSocket(0).use { it.localPort }
         val e = assertThrows(AdbPairingException::class.java) { AdbPairing(client).pair("127.0.0.1", port, "1", timeoutMs = 2000) }
@@ -70,17 +92,17 @@ class AdbPairingTest {
     /** 两端导出一致,且空 context 与不带 context 相同(Android 端传空数组)。 */
     @Test
     fun tls13ExporterAgreesAndIgnoresEmptyContext() {
-        ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress()).use { ss ->
+        ServerSocket(0, 1, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))).use { ss ->
             val serverTls = TestTls.tls(TestTls.device)
             var serverSide: ByteArray? = null
             val t = kotlin.concurrent.thread {
                 ss.accept().use { p ->
-                    val s = serverTls.wrap(p, "127.0.0.1", ss.localPort, client = false)
+                    val s = serverTls.wrap(p, InetSocketAddress(p.localAddress, ss.localPort), client = false)
                     serverSide = org.conscrypt.Conscrypt.exportKeyingMaterial(s, AdbPairing.EXPORT_LABEL, null, 64)
                     s.inputStream.read()
                 }
             }
-            client.connect("127.0.0.1", ss.localPort, 5000).use { s ->
+            client.connect(InetSocketAddress(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), ss.localPort), 5000).use { s ->
                 assertEquals("TLSv1.3", s.session.protocol)
                 val a = org.conscrypt.Conscrypt.exportKeyingMaterial(s, AdbPairing.EXPORT_LABEL, null, 64)
                 val b = org.conscrypt.Conscrypt.exportKeyingMaterial(s, AdbPairing.EXPORT_LABEL, ByteArray(0), 64)
@@ -158,23 +180,41 @@ class AdbIdentityTest {
     }
 
     @Test
-    fun wrappedKeyFileRoundTripAndLoadOrCreate() {
+    fun wrappedKeyFileRoundTripAndIdentitySource() {
         val dir = Files.createTempDirectory("adbkey").toFile()
         val aes = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
-        val store = WrappedKeyFile(java.io.File(dir, "k.bin")) { aes }
+        val file = java.io.File(dir, "k.bin")
+        val store = WrappedKeyFile(file) { aes }
         assertNull(store.read())
-        val a = AdbIdentity.loadOrCreate(store, "mika@x")
-        val raw = java.io.File(dir, "k.bin").readBytes()
+        val a = AdbIdentitySource(store, { "mika@x" }).forConnect()
+        val raw = file.readBytes()
         assertTrue("not stored in clear", !String(raw, Charsets.ISO_8859_1).contains(String(a.keyPair.private.encoded.copyOfRange(30, 60), Charsets.ISO_8859_1)))
-        val b = AdbIdentity.loadOrCreate(store, "mika@x")
+        // 另一个进程(新的来源)读回同一把
+        val b = AdbIdentitySource(store, { "mika@x" }).forConnect()
         assertEquals(a.publicKey, b.publicKey)
         assertEquals(a.adbPublicKey, b.adbPublicKey)
 
-        // 换了包装密钥(如 Keystore 被清)就读不出,重新生成
+        // 换了包装密钥(如 Keystore 被清)就读不出:报出来,不换钥匙、不动文件
         val other = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
-        val c = AdbIdentity.loadOrCreate(WrappedKeyFile(java.io.File(dir, "k.bin")) { other }, "mika@x")
-        assertTrue(c.publicKey != a.publicKey)
+        val otherStore = WrappedKeyFile(file) { other }
+        assertThrows(AdbKeyUnreadableException::class.java) { otherStore.read() }
+        val src = AdbIdentitySource(otherStore, { "mika@x" })
+        assertThrows(AdbKeyUnreadableException::class.java) { src.forConnect() }
+        assertEquals(AdbKeyState.Unreadable, src.state)
+        assertArrayEquals(raw, file.readBytes())
         store.clear()
         assertNull(store.read())
+    }
+
+    @Test
+    fun wrappedKeyFileThatIsEmptyOrTruncatedIsUnreadableNotAbsent() {
+        val dir = Files.createTempDirectory("adbkey").toFile()
+        val aes = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+        val file = java.io.File(dir, "k.bin")
+        val store = WrappedKeyFile(file) { aes }
+        file.writeBytes(ByteArray(0))
+        assertThrows(AdbKeyUnreadableException::class.java) { store.read() }
+        file.writeBytes(byteArrayOf(12, 1, 2, 3))
+        assertThrows(AdbKeyUnreadableException::class.java) { store.read() }
     }
 }

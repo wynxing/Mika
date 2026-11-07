@@ -242,12 +242,6 @@ class ToolDispatcherTest {
         assertFalse(spec.description, "VOLUME" in spec.description)
     }
 
-    @Test fun writingToolClassification() {
-        val e = buildJsonObject { }
-        for (n in listOf("phone_tap", "phone_type_text", "phone_scroll", "phone_swipe", "phone_back", "phone_launch_app", "phone_clear_text", "phone_press_key")) assertTrue(n, isWritingTool(n, e))
-        for (n in listOf("phone_observe", "phone_screenshot", "wait", "phone_list_elements", "phone_list_apps", "end_not_done")) assertFalse(n, isWritingTool(n, e))
-    }
-
     @Test fun observeAttachesImageOnlyWithVision() = runTest {
         val off = toolDispatcher(FakeScreen()).execute(call("phone_observe"))
         assertNull(off.image)
@@ -262,7 +256,7 @@ class ToolDispatcherTest {
 
     @Test fun definitionsFollowVision() {
         val off = toolDispatcher(FakeScreen()).definitions().map { it.name }
-        assertFalse("phone_screenshot" in off); assertTrue("phone_observe" in off); assertFalse("home" in off)
+        assertFalse("phone_screenshot" in off); assertTrue("phone_observe" in off)
         assertTrue("phone_screenshot" in toolDispatcher(FakeScreen(), true).definitions().map { it.name })
         toolDispatcher(FakeScreen()).definitions().forEach { assertTrue(it.name, it.parametersJsonSchema.startsWith("{")) }
     }
@@ -336,10 +330,23 @@ class ToolDispatcherTest {
         assertEquals(0, back["required"]!!.jsonArray.size)
     }
 
-    @Test fun listAppsReturnsPlainPackagesAndLabels() = runTest {
+    @Test fun listAppsReturnsEachPackageOnceAndOmitsFalseFlags() = runTest {
         val c = toolDispatcher(FakeScreen()).execute(call("phone_list_apps")).content
-        assertEquals("com.x", c["packages"]!!.jsonArray[0].jsonPrimitive.content)
-        assertEquals("X", c["apps"]!!.jsonArray[0].jsonObject["label"]!!.jsonPrimitive.content)
+        assertNull("包名只在 apps 里出现,不再另带一份完整 packages 数组", c["packages"])
+        val app = c["apps"]!!.jsonArray.single().jsonObject
+        assertEquals("com.x", app["package"]!!.jsonPrimitive.content)
+        assertEquals("X", app["label"]!!.jsonPrimitive.content)
+        assertFalse("blocked" in app)
+        assertFalse("screenShareAllowed" in app)
+
+        val restricted = object : ScreenPort by FakeScreen() {
+            override val appAccess = com.wangzan101.mika.core.access.AppAccessPolicy {
+                com.wangzan101.mika.core.access.AppAccessState(blocked = setOf("com.x"), shareAllowed = setOf("com.x"))
+            }
+        }
+        val marked = toolDispatcher(restricted).execute(call("phone_list_apps")).content["apps"]!!.jsonArray.single().jsonObject
+        assertEquals(true, marked["blocked"]!!.jsonPrimitive.boolean)
+        assertEquals(true, marked["screenShareAllowed"]!!.jsonPrimitive.boolean)
     }
 
     @Test fun unknownToolNamesTool() = runTest {

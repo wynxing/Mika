@@ -28,11 +28,18 @@
         <item quantity="other">Queued: %1$d tasks ahead</item>
     </plurals>
     <string name="fail_no_main_model">No usable main model yet. Add a model with tool calling in Settings.</string>
+    <string name="fail_model_untested">The main model hasn’t passed a test on %1$s yet. Go to Settings › Models › %1$s and tap “Test again” to check it.</string>
     <string name="fail_no_web">Web isn’t available on this device, so the condition check can’t run</string>
     <string name="task_waiting_display">Queued: starts after the other task finishes</string>
     <string name="task_no_phone_helper">Phone control isn’t ready. Finish “Set up phone control” in Mika. Web and file tasks aren’t affected.</string>
     <string name="task_no_a11y">Mika’s accessibility service is off. Turn on Mika under Accessibility in system settings.</string>
+    <string name="task_a11y_not_running">Mika’s accessibility service is enabled, but Android hasn’t connected it. Turn Mika off and on again under Accessibility in system settings. If Android blocks it, allow restricted settings in Mika’s app info first.</string>
     <string name="task_error">Task error: %1$s</string>
+    <string name="task_app_blocked">“%1$s” is disabled, so Mika can’t read or operate it. Allow it in Settings › Application access and try again.</string>
+    <string name="task_app_this_app">This app</string>
+    <string name="task_app_access_unavailable">Application access settings can’t be read. Reset them in Settings › Application access and try again.</string>
+    <string name="task_app_protected">This screen needs you to handle it yourself; Mika can’t automate it.</string>
+    <string name="task_app_unverified">Couldn’t confirm which app is in front, so nothing more was done. Try again, or open the target app first.</string>
     <string name="task_condition_interrupted">Condition check interrupted</string>
     <string name="task_check_unfinished">Scheduled check didn’t finish: %1$s</string>
     <string name="task_may_make_sound">This app may make sound</string>
@@ -50,6 +57,7 @@
     <string name="task_too_old">Phone app control needs Android 12 or later. Chat, web and sandbox tasks are still available.</string>
     <string name="task_shell_died">The phone control helper disconnected and the virtual screen closed. Try again once it reconnects.</string>
     <string name="task_running">Running</string>
+    <string name="channel_task_accepted">Got it — your task is registered.</string>
     <string name="task_step_note">Step %1$d: %2$s</string>
     <string name="task_wait_unlock">Waiting for unlock</string>
     <string name="task_wait_unlock_body">Will continue once you unlock your phone</string>
@@ -60,4 +68,17 @@
     <string name="task_stopped_body">You stopped this task</string>
     <string name="gate_user_on_page">You’re using the page, so Mika paused</string>
     <string name="task_no_phone_helper_usb">The phone helper has stopped (usually after a phone restart). Open Mika and run the USB start command again; you can copy it in “Set up phone control”. Web and file tasks aren’t affected.</string>
+    <string name="drawer_screens">Background screens</string>
+    <string name="screens_title">Background screens</string>
+    <string name="screens_empty">No task is running right now.</string>
+    <string name="screens_note">Each running task works on its own background screen, so yours stays free. Tap a task to go back to its chat.</string>
+    <string name="screens_using_app">Using %1$s</string>
+    <string name="screens_using_browser">Using the browser</string>
+    <string name="screens_no_app">Hasn’t opened an app yet</string>
+    <string name="screens_app_unknown">Can’t see which app is open right now</string>
+    <string name="screens_preview">Show the live screen</string>
+    <string name="screens_hide_preview">Hide the live screen</string>
+    <string name="screens_waiting">Waiting</string>
+    <string name="screens_needs_you">Needs you</string>
+    <string name="screens_zoom">Enlarge this screen</string>
 </resources>

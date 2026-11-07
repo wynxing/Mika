@@ -36,6 +36,9 @@ internal class NodeIds(private val keep: Int = 4) {
     }
 
     @Synchronized
+    fun clear() { history.clear() }
+
+    @Synchronized
     fun current(): NodeSnapshot? = history.firstOrNull()
 
     @Synchronized

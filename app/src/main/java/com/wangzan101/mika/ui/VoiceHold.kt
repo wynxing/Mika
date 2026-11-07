@@ -127,6 +127,8 @@ private val CancelLift = 80.dp
 /** 底部弹层:哪种说明。 */
 internal sealed interface VoiceSheet {
     data object Permission : VoiceSheet
+    /** 已经允许录音,识别服务仍说没有权限或录音出错:说明系统的麦克风总开关和权限管理,或被别的应用占用。 */
+    data object MicBlocked : VoiceSheet
     data class Unavailable(val why: SpeechEngineSpec.Why) : VoiceSheet
 }
 
@@ -134,6 +136,7 @@ internal sealed interface VoiceSheet {
 internal object VoiceCopy {
     /** 卡片顶上的小标签:用的是哪个转文字。 */
     fun engine(spec: SpeechEngineSpec): String = when (spec) {
+        is SpeechEngineSpec.Doubao -> tr(R.string.speech_doubao_model)
         is SpeechEngineSpec.System -> tr(if (spec.onDevice) R.string.voice_engine_phone_offline else R.string.voice_engine_phone)
         is SpeechEngineSpec.Provider -> spec.model
         is SpeechEngineSpec.Unavailable -> ""
@@ -143,7 +146,7 @@ internal object VoiceCopy {
     fun failure(why: SpeechFailure): String = when (why) {
         SpeechFailure.Busy -> tr(R.string.voice_busy)
         SpeechFailure.Network -> tr(R.string.voice_network)
-        SpeechFailure.MicUnavailable -> tr(R.string.voice_mic_unavailable)
+        SpeechFailure.MicUnavailable, SpeechFailure.AudioError -> tr(R.string.voice_mic_unavailable)
         // 服务商的错沿用模型出错时的说法(额度、Key、找不到模型……)
         is SpeechFailure.Provider -> tr(R.string.voice_provider_failed, why.error.message.orEmpty())
         SpeechFailure.NoPermission -> tr(R.string.voice_permission_title)
@@ -153,6 +156,7 @@ internal object VoiceCopy {
     val NO_MATCH get() = tr(R.string.voice_no_match)
 
     fun unavailable(why: SpeechEngineSpec.Why): String = when (why) {
+        SpeechEngineSpec.Why.DoubaoNotConfigured -> tr(R.string.speech_doubao_missing)
         SpeechEngineSpec.Why.NoSystemNoModel -> tr(R.string.voice_unavailable_no_engine)
         SpeechEngineSpec.Why.SystemGone -> tr(R.string.voice_unavailable_system_gone)
         SpeechEngineSpec.Why.SystemNoResponse -> tr(R.string.voice_unavailable_system_silent)
@@ -286,7 +290,10 @@ internal fun rememberVoiceHold(voice: VoiceSource?, onText: (String) -> Unit): V
                 when (val why = s.why) {
                     null -> vh.toast = VoiceCopy.NO_MATCH
                     is SpeechFailure.Unavailable -> vh.sheet = VoiceSheet.Unavailable(why.why)
-                    SpeechFailure.NoPermission -> vh.ensureMic()
+                    // 录音权限还没给:照旧弹系统框或「去设置」。已经给了仍报没有权限,或识别服务报录音出错:
+                    // 另弹说明(系统的麦克风总开关、权限管理)。麦克风起不来的其他情况照旧提示可能被占用
+                    SpeechFailure.NoPermission -> if (vh.ensureMic()) vh.sheet = VoiceSheet.MicBlocked
+                    SpeechFailure.AudioError -> vh.sheet = VoiceSheet.MicBlocked
                     else -> vh.toast = VoiceCopy.failure(why)
                 }
                 vh.hold.reset()
@@ -557,13 +564,12 @@ internal fun VoiceConverting(modifier: Modifier = Modifier) {
     }
 }
 
-/** 能按住说话时的灰字:前面一个小话筒。 */
+/** 能按住说话时的灰字：在可用输入区域里居中；[followUp] 决定任务在跑时说「插话」还是「排下一件」。 */
 @Composable
-internal fun VoicePlaceholder(mode: ComposerMode) {
+internal fun VoicePlaceholder(mode: ComposerMode, followUp: FollowUpMode = FollowUpMode.Steer, modifier: Modifier = Modifier) {
     val c = MikaTheme.colors
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Icon(MikaIcons.Mic, null, Modifier.size(16.dp), tint = c.ink3)
-        Text(ChatCopy.voicePlaceholder(mode), style = MikaType.Body, color = c.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+        Text(ChatCopy.voicePlaceholder(mode, followUp), style = MikaType.Body, color = c.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -599,9 +605,10 @@ internal fun VoiceSheetHost(vh: VoiceHold, onPickSpeech: () -> Unit) {
             action = stringResource(R.string.voice_go_pick)
             go = onPickSpeech
         }
-        VoiceSheet.Permission -> {
-            title = stringResource(R.string.voice_permission_title)
-            body = stringResource(R.string.voice_permission_body)
+        VoiceSheet.Permission, VoiceSheet.MicBlocked -> {
+            val blocked = sheet == VoiceSheet.MicBlocked
+            title = stringResource(if (blocked) R.string.voice_mic_blocked_title else R.string.voice_permission_title)
+            body = stringResource(if (blocked) R.string.voice_mic_blocked_body else R.string.voice_permission_body)
             action = stringResource(R.string.voice_permission_open)
             go = {
                 context.startActivity(

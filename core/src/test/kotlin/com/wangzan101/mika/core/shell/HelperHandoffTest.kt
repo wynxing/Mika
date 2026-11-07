@@ -7,6 +7,11 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
 class HelperHandoffTest {
@@ -22,6 +27,30 @@ class HelperHandoffTest {
     private fun nonces(store: NonceStore = MemStore()): HandoffNonces {
         var n = 0
         return HandoffNonces(store, clock = { now }, wallClock = { wall }) { "n${++n}" }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun usbScriptIsRewrittenWithAFreshNonceWhenNoncesAreClearedWhileNoHelperIsConnected() = runTest {
+        var n = 0
+        val gate = HandoffNonces(MemStore(), clock = { now }, wallClock = { wall }) { "f00d%04d".format(++n) }
+        val helper = MutableStateFlow<Any?>(null)
+        val written = mutableListOf<String>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            HelperHandoff.usbScriptWrites(helper, gate.resets).collect { connected ->
+                written += HelperHandoff.usbFile(connected, "/a.apk", "p", 1, { "pin" }, gate::usbNonce, "/s.sh")
+            }
+        }
+        assertEquals(1, written.size)
+        val stale = gate.usbNonce()
+        assertTrue(written[0].contains(stale))
+        // 解除配对:助手一直不在,也要重写,新脚本里是新口令,旧的不再认
+        gate.clear()
+        assertEquals(2, written.size)
+        assertFalse(written[1].contains(stale))
+        assertFalse(gate.matches(stale))
+        assertTrue(gate.matches(gate.usbNonce()))
+        assertTrue(written[1].contains(gate.usbNonce()))
     }
 
     @Test
@@ -169,11 +198,11 @@ class HelperHandoffTest {
     fun usbScriptStartsTheSameHelperDetachedWithTheNonceOnStdin() {
         val script = HelperHandoff.usbScript(apk, "com.wangzan101.mika", 10234, "ab'cd", "f00d", scriptPath)
         assertTrue(script.startsWith("#!/system/bin/sh\n"))
-        // 和无线调试同一个入口、同样的参数;指纹里的单引号转义好;另起会话、放到后台、输出丢掉
+        // 和无线调试同一个入口、同样的参数;指纹里的单引号转义好;忽略挂断信号、另起会话、放到后台、输出丢掉
         assertTrue(
             script,
             script.contains(
-                "(echo \"\$n\" | CLASSPATH='$apk' setsid app_process /system/bin --nice-name='com.wangzan101.mika:helper' " +
+                "(echo \"\$n\" | CLASSPATH='$apk' nohup setsid app_process /system/bin --nice-name='com.wangzan101.mika:helper' " +
                     "com.wangzan101.mika.shell.HelperMain 'com.wangzan101.mika' 10234 'ab'\\''cd' >/dev/null 2>&1 &)",
             ),
         )
@@ -189,6 +218,17 @@ class HelperHandoffTest {
         assertTrue(script.contains("Mika helper starting... Open Mika to confirm"))
         assertTrue(script.contains("adb shell sh /sdcard/Android/data/com.wangzan101.mika/files/usb-start.sh"))
         assertTrue(script.endsWith("fi\n"))
+    }
+
+    @Test
+    fun usbScriptDoesNotPromiseThatTheHelperSurvivesUnplugging() {
+        val script = HelperHandoff.usbScript(apk, "com.wangzan101.mika", 10234, "pin", "f00d", scriptPath)
+        assertTrue(script.contains("On most phones it keeps running after you unplug the cable"))
+        assertTrue(script.contains("if phone control stopped after unplugging, plug in and run this command again"))
+        assertFalse(script.contains("It keeps running after you unplug the cable."))
+        // 新提示不换启动机制,口令仍只出现一次
+        assertTrue(script.contains("nohup setsid app_process"))
+        assertEquals(1, script.split("f00d").size - 1)
     }
 
     @Test

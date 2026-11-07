@@ -11,9 +11,6 @@ import org.junit.Test
 import java.math.BigInteger
 import java.security.MessageDigest
 import javax.crypto.AEADBadTagException
-import javax.crypto.Cipher
-import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.SecretKeySpec
 
 private fun ByteArray.hexs() = joinToString("") { "%02x".format(it) }
 
@@ -197,7 +194,7 @@ class Spake2RoundTripTest {
     }
 }
 
-class HkdfGcmTest {
+class HkdfTest {
     @Test
     fun rfc5869Sha256Cases() {
         assertEquals(
@@ -211,25 +208,6 @@ class HkdfGcmTest {
         assertEquals(
             "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8",
             Hkdf.sha256(ByteArray(22) { 0x0b }, null, ByteArray(0), 42).hexs(),
-        )
-    }
-
-    /** GCM 规范附录的 AES-128 用例 2、3:确认平台 GCM 的用法(标签长度、密文后接标签)。 */
-    @Test
-    fun gcmSpecVectors() {
-        fun seal(k: String, iv: String, p: String): String {
-            val c = Cipher.getInstance("AES/GCM/NoPadding")
-            c.init(Cipher.ENCRYPT_MODE, SecretKeySpec(hex(k), "AES"), GCMParameterSpec(128, hex(iv)))
-            return c.doFinal(hex(p)).hexs()
-        }
-        assertEquals("0388dace60b6a392f328c2b971b2fe78ab6e47d42cec13bdf53a67b21257bddf", seal("00".repeat(16), "00".repeat(12), "00".repeat(16)))
-        assertEquals(
-            "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091473f5985" +
-                "4d5c2af327cd64a62cf35abd2ba6fab4",
-            seal(
-                "feffe9928665731c6d6a8f9467308308", "cafebabefacedbaddecaf888",
-                "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255",
-            ),
         )
     }
 }

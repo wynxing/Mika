@@ -121,7 +121,6 @@ class ScriptStepsTest {
         var last: JsonObject? = null
         repeat(14) { last = s.run(Part.ToolCall("c1.$it", "web_tap", """{"x":500,"y":50}""")).content }
         assertTrue(last!!["error"]?.jsonPrimitive?.content != "guard_stopped")
-        assertTrue(s.verdicts.none { it.code == "repeating_action" })
     }
 
     @Test fun loopRunsScriptActionsThroughTheGate() = runTest {

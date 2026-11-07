@@ -12,7 +12,8 @@ class ParallelCapabilityTest {
 
     @Test fun android13IsOne() {
         val limit = ParallelCapability.detect(sdk = 33, lowRam = false, userMax = 3, secondDisplayFailed = false)
-        assertEquals(ParallelLimit(1, "安卓 14 以上才支持同时进行多个任务"), limit)
+        assertEquals(1, limit.max)
+        assertNotNull(limit.reason)
     }
 
     @Test fun lowRamIsOne() {

@@ -1,6 +1,7 @@
 package com.wangzan101.mika.core.docs
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -30,8 +31,8 @@ class ReadmeSectionsTest {
     }
 
     @Test fun missingMarkerFails() {
-        val failed = runCatching { ReadmeSections.render("没有标记", mapOf("x" to "新")) }.isFailure
-        assertTrue(failed)
+        val e = assertThrows(IllegalStateException::class.java) { ReadmeSections.render("没有标记", mapOf("x" to "新")) }
+        assertTrue(e.message.orEmpty(), "缺少" in e.message.orEmpty())
     }
 
     @Test fun readsPresetsFromSource() {

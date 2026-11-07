@@ -34,6 +34,5 @@ class OnboardingTest {
 
     @Test fun dotsFollowSteps() {
         assertEquals(listOf(0, 1, 2), OnboardingStep.entries.map(Onboarding::dot))
-        assertEquals(3, Onboarding.DOTS)
     }
 }

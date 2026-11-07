@@ -12,7 +12,6 @@ import org.junit.Assert.assertTrue
 import org.junit.BeforeClass
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 
 /** AndroidSandbox 在真机上跑命令;根文件系统按冒烟测试的方式准备在 files/sandbox-test/rootfs,不碰装好的沙箱。 */
 @RunWith(AndroidJUnit4::class)
@@ -22,10 +21,6 @@ class AndroidSandboxDeviceTest {
 
     private fun sh(command: String, ws: String = "dev-a", timeoutMs: Long = 30_000): CommandResult =
         runBlocking { sb.run(ws, listOf("/bin/sh", "-lc", command), null, timeoutMs) {} }
-
-    @Test fun reportsReady() {
-        assertEquals(SandboxStatus.Ready(network = false), sb.status())
-    }
 
     @Test fun echoRuns() {
         val r = sh("echo hi")

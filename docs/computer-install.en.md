@@ -4,6 +4,8 @@
 
 The starting point for using Mika from a computer is [Use Mika from a computer](computer.en.md): pick CLI + Skill or MCP there, and USB or Wi-Fi / VPN. This page only covers installing, updating and removing the CLI and the Skill; if you use an MCP client, skip it and follow the [MCP guide](mcp.en.md).
 
+Agents wanting a fixed shortest path: see the [agent quick path](agent-quickstart.en.md).
+
 ## Before you start
 
 - To let a computer agent that can run commands and supports Skills use Mika, install the [Skill](#skill-install). It includes its own CLI script, so no separate CLI install is needed.
@@ -22,7 +24,7 @@ pipx install 'git+https://github.com/wangzan101/Mika.git@<tag>#subdirectory=tool
 mika --version
 ```
 
-The pipx package is `mika-phone-cli` and the command is `mika`. The CLI has its own version number, separate from the APK's. With a repository checkout you can also run `pipx install ./tools/mika` from the repository root, or skip installing and run `python3 tools/mika/scripts/mika_cli.py` directly.
+The pipx package is `mika-phone-cli` and the command is `mika`. The CLI has its own version number, separate from the APK's. With a repository checkout you can also run `pipx install ./tools/mika` from the repository root, or skip installing and run `python3 tools/mika/scripts/mika_cli.py` directly (`py -3` on Windows).
 
 ## CLI: update, roll back and remove
 
@@ -47,7 +49,7 @@ The Skill is the repository's `tools/mika` folder: `SKILL.md` tells the agent ho
 3. Check that the bundled script runs:
 
    ```bash
-   python3 <skills-directory>/mika/scripts/mika_cli.py --version
+   python3 <skills-directory>/mika/scripts/mika_cli.py --version   # use py -3 instead of python3 on Windows
    ```
 
 4. Start a new agent session and confirm it can see a Skill named `mika`.
@@ -63,7 +65,7 @@ Start a new agent session after any change.
 
 ## After installing: check the connection
 
-With only the Skill installed, replace `mika` below with `python3 <skills-directory>/mika/scripts/mika_cli.py`.
+With only the Skill installed, replace `mika` below with `python3 <skills-directory>/mika/scripts/mika_cli.py` (`py -3` on Windows).
 
 Over USB or connected wireless ADB:
 
@@ -86,6 +88,7 @@ mika --url http://PHONE:8765 --token-file /path/to/private-token-file doctor --j
 | `incompatible_api` | The APK on the phone is too old to include task API v1; update it. |
 | `stale_connection` | The phone has rebooted; run `connect` again. |
 | `device_selection` | More than one phone is online; find the serial with `mika devices` and add `--device SERIAL`. |
+| `connection_info` | Mika's connection information could not be read (the phone is locked, Mika hasn't been opened yet, and so on): unlock the phone, open Mika once, then run `connect` again. |
 | `adb` / `adb_unavailable` | Make sure adb is on PATH and the phone shows as `device` in `adb devices`, open Mika once on the phone, then run `connect` again. |
 | The agent does not see the Skill | Check for an extra nested folder and that `scripts/` was copied too, then start a new session. |
 

@@ -10,10 +10,14 @@
         </intent>
     </queries>
     <application>
+        <activity android:name="com.wangzan101.mika.cap.phone.display.RotationTestActivity"
+            android:exported="true" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
+            android:theme="@android:style/Theme.Material.NoActionBar" />
         <!-- 测试用页面,由测试用 am start 打开到虚拟屏。它们运行在测试包自己的进程里、不带 Kotlin 标准库,
-             所以用 Java 写;类名必须和源文件里的一致(AndroidTestManifestTest 会查) -->
+             所以用 Java 写;类名必须和源文件里的一致(ManifestProvidersTest 会查) -->
         <activity android:name="com.wangzan101.mika.cap.phone.a11y.SecureTestActivity" android:exported="true" />
         <activity android:name="com.wangzan101.mika.cap.phone.a11y.PlainTestActivity" android:exported="true" />
+        <activity android:name="com.wangzan101.mika.cap.phone.a11y.GestureTapTestActivity" android:exported="true" />
         <activity android:name="com.wangzan101.mika.a11y.WebEditorTestActivity" android:exported="true" />
         <activity android:name="com.wangzan101.mika.cap.phone.a11y.FieldsTestActivity" android:exported="true" />
         <!-- 滚轮测试页:两个原版数字滚轮 -->
@@ -49,5 +53,7 @@
                 <data android:scheme="mika-parity" />
             </intent-filter>
         </activity>
+        <!-- 一直在出声(循环播放无声的声音)的探针页:任务结束时正在出声的 App 默认关掉 -->
+        <activity android:name="com.wangzan101.mika.shell.AudioProbeActivity" android:exported="true" />
     </application>
 </manifest>

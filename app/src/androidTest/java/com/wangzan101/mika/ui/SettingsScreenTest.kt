@@ -29,6 +29,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import androidx.compose.ui.Modifier
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import org.junit.runner.RunWith
 import com.wangzan101.mika.core.cap.phone.OperatingPace
 
@@ -45,19 +48,15 @@ class SettingsScreenTest {
         mainModel: String? = "DeepSeek",
         onProblem: (Problem) -> Unit = {},
         opened: MutableList<String> = mutableListOf(),
-        showDeveloper: Boolean = true,
-        usageTokens: Long? = 123_000,
     ) {
         compose.setContent {
             SettingsContent(
                 status = status, androidRelease = "14", mainModel = mainModel, onBack = {}, onProblem = onProblem,
-                onOpenModels = { opened += "models" }, usageTokens = usageTokens, onOpenUsage = { opened += "usage" }, onOpenPhoneOps = { opened += "phone" }, onOpenDuringWork = { opened += "work" },
+                onOpenModels = { opened += "models" }, onOpenPhoneOps = { opened += "phone" }, onOpenDuringWork = { opened += "work" },
+                onOpenWechat = { opened += "wechat" },
                 capsuleMode = CapsuleMode.DuringTasks, onOpenCapsule = { opened += "capsule" }, onOpenNotifications = { opened += "notifications" },
-                onOpenMemory = { opened += "memory" },
-                webSitesCount = 3, onOpenWebSites = { opened += "web" },
-                sandbox = SandboxStatus.Ready(network = false), onOpenSandbox = { opened += "sandbox" },
-                routes = 8, onOpenRoutes = { opened += "routes" }, onOpenRecovery = { opened += "recovery" },
-                showDeveloper = showDeveloper, onOpenDeveloper = { opened += "dev" },
+                onOpenLanguage = { opened += "language" }, onOpenAppAccess = { opened += "access" },
+                onOpenMemory = { opened += "memory" }, onOpenAdvanced = { opened += "advanced" },
                 versionName = "0.1.0", onOpenAbout = { opened += "about" },
             )
         }
@@ -73,10 +72,9 @@ class SettingsScreenTest {
     fun homeShowsGroupsStatusAndValues() {
         home()
         compose.onNodeWithText("一切就绪").assertIsDisplayed()
-        compose.onNodeWithText("基本").assertIsDisplayed()
-        // 首页一屏放不下(多了「语言」一行后更长):每个值先滚进视口再看。
-        // 依次是模型、手机操作、通知、网站登录、操作路线、计算环境、关于
-        for (v in listOf("DeepSeek", "可用", "正常", "3 个", "8 条", "已就绪", "0.1.0")) {
+        compose.onNodeWithText("常用").assertIsDisplayed()
+        // 首页只显示模型、手机操作、通知和版本等常用状态。
+        for (v in listOf("DeepSeek", "可用", "正常", "0.1.0")) {
             scrollTo(v)
             compose.onNodeWithText(v).assertIsDisplayed()
         }
@@ -86,35 +84,42 @@ class SettingsScreenTest {
     fun homeRowsOpenTheirPages() {
         val opened = mutableListOf<String>()
         home(opened = opened)
-        for (t in listOf("模型", "Token 用量", "手机操作", "干活时", "悬浮胶囊", "通知", "记忆与技能", "网站登录", "文件与计算环境", "记住的操作路线", "恢复与修复", "开发者选项", "关于 Mika")) {
+        for (t in listOf("模型", "手机操作", "微信", "任务运行", "悬浮胶囊", "语言与外观", "通知", "记忆与数据", "应用访问", "高级与其他", "关于 Mika")) {
             scrollTo(t)
             compose.onNodeWithText(t).performClick()
         }
-        assertEquals(listOf("models", "usage", "phone", "work", "capsule", "notifications", "memory", "web", "sandbox", "routes", "recovery", "dev", "about"), opened)
+        assertEquals(listOf("models", "phone", "wechat", "work", "capsule", "language", "notifications", "memory", "access", "advanced", "about"), opened)
     }
 
-    /** 「Token 用量」写近 7 天的合计;一点没有时写「还没有」,还没统计出来时不显示这一行。 */
+    /** 高级与其他集中放连接、维护和工程入口,各行仍打开原来的子页。 */
     @Test
-    fun usageRowShowsWeekTotal() {
-        var tokens by mutableStateOf<Long?>(123_000)
+    fun advancedRowsOpenTheirPages() {
+        val opened = mutableListOf<String>()
         compose.setContent {
-            SettingsContent(
-                status = ready, androidRelease = "14", mainModel = "DeepSeek", onBack = {}, onProblem = {}, onOpenModels = {},
-                usageTokens = tokens,
+            AdvancedSettingsContent(
+                onBack = {}, proxy = "", onOpenProxy = { opened += "proxy" },
+                sandbox = SandboxStatus.Ready(network = false), onOpenSandbox = { opened += "sandbox" },
+                onOpenRecovery = { opened += "recovery" },
+                computerAccess = false, onOpenComputerAccess = { opened += "computer" },
+                mcpServersCount = 0, onOpenMcpServers = { opened += "mcp" },
+                showDeveloper = true, onOpenDeveloper = { opened += "dev" },
+                onQuit = { opened += "quit" },
             )
         }
-        compose.onNodeWithText("近 7 天 12.3 万").assertIsDisplayed()
-        tokens = 0
-        compose.awaitOne("还没有").assertIsDisplayed()
-        tokens = null
-        compose.waitForIdle()
-        compose.onAllNodesWithText("Token 用量").assertCountEquals(0)
+        for (t in listOf("网络代理", "文件与计算环境", "连接电脑", "MCP 服务器", "恢复与修复")) {
+            scrollTo(t)
+            compose.onNodeWithText(t).performClick()
+        }
+        compose.onNodeWithText("开发者选项").performScrollTo().performClick()
+        scrollTo("完全退出 Mika")
+        compose.onNodeWithText("完全退出 Mika").performClick()
+        assertEquals(listOf("proxy", "sandbox", "computer", "mcp", "recovery", "dev", "quit"), opened)
     }
 
-    /** 发布版不显示开发者选项。 */
+    /** 发布版的高级与其他里没有开发者选项。 */
     @Test
     fun developerRowHiddenInRelease() {
-        home(showDeveloper = false)
+        compose.setContent { AdvancedSettingsContent(onBack = {}, showDeveloper = false) }
         compose.onAllNodesWithText("开发者选项").assertCountEquals(0)
     }
 
@@ -139,8 +144,6 @@ class SettingsScreenTest {
         compose.onNodeWithText("手机操作不可用").assertIsDisplayed()
         compose.onNodeWithText("未设置").assertIsDisplayed()
         compose.onNodeWithText("不支持").assertIsDisplayed()
-        // 安卓 12 以下手机操作不可用:不给恢复与修复
-        compose.onAllNodesWithText("恢复与修复").assertCountEquals(0)
     }
 
     @Test
@@ -149,33 +152,17 @@ class SettingsScreenTest {
         compose.setContent {
             PhoneOpsScreen(
                 SystemStatus(34, BuiltinShellStatus.WirelessDebuggingOff, AccessibilityState.On, notificationsAllowed = true),
-                "14", onProblem = {}, onOpenNotifications = {}, onRepair = { repaired++ }, onUnpair = {}, onBack = {},
+                "14", onProblem = {}, onRepair = { repaired++ }, onUnpair = {}, onBack = {},
             )
         }
         compose.onNodeWithText("无障碍服务").assertIsDisplayed()
         compose.onNodeWithText("已开启").assertIsDisplayed()
         compose.onNodeWithText("无线调试已关").assertIsDisplayed()
-        compose.onNodeWithText("正常").assertIsDisplayed()
         compose.onNodeWithText("安卓 14").assertIsDisplayed()
         compose.onNodeWithText("满足").assertIsDisplayed()
         compose.onNodeWithText(PhoneSetupCopy.usageNote(HelperRestart.None)).assertExists()
         compose.onNodeWithText(PhoneSetupCopy.REPAIR).performClick()
         assertEquals(1, repaired)
-    }
-
-    /** 手机操作页的「通知」一行显示总体状态,点它进通知页。 */
-    @Test
-    fun phoneOpsNotificationRowOpensNotifications() {
-        var opened = 0
-        compose.setContent {
-            PhoneOpsScreen(
-                ready.copy(notificationsAllowed = false), "14", onProblem = {}, onOpenNotifications = { opened++ },
-                onRepair = {}, onUnpair = {}, onBack = {},
-            )
-        }
-        compose.onNodeWithText("已关闭").assertIsDisplayed()
-        compose.onNodeWithText("通知").performClick()
-        assertEquals(1, opened)
     }
 
     /** 通知页:总开关允许、一个频道被调低、进度被关时,各行显示状态,点各行交给 onFix。 */
@@ -212,7 +199,7 @@ class SettingsScreenTest {
     @Test
     fun unpairAsksFirst() {
         var unpaired = 0
-        compose.setContent { PhoneOpsScreen(ready, "14", onProblem = {}, onOpenNotifications = {}, onRepair = {}, onUnpair = { unpaired++ }, onBack = {}) }
+        compose.setContent { PhoneOpsScreen(ready, "14", onProblem = {}, onRepair = {}, onUnpair = { unpaired++ }, onBack = {}) }
         compose.onNodeWithText(PhoneSetupCopy.UNPAIR).performClick()
         assertEquals(0, unpaired)
         compose.clickInDialog(PhoneSetupCopy.UNPAIR_CONFIRM)
@@ -359,18 +346,23 @@ class SettingsScreenTest {
         compose.onNodeWithText("长任务的摘要分条写").assertIsDisplayed()
     }
 
-    /** 「自主模式」在开发者选项最前面,默认关;点开关或整行都切换。 */
+    /** 「自主模式」在任务运行最前面,默认关;点开关或整行都切换。 */
     @Test
     fun autonomousSwitchComesFirstAndToggles() {
         val toggled = mutableListOf<Boolean>()
         var on by mutableStateOf(false)
-        compose.setContent { DeveloperOptionsScreen(SpeedFlags.OFF, onSpeed = {}, onBack = {}, autonomous = on, onAutonomous = { toggled += it; on = it }) }
+        compose.setContent {
+            DuringWorkScreen(
+                keepScreenOn = true, onKeepScreenOn = {}, muteTarget = true, onMuteTarget = {},
+                parallel = null, onParallelMax = {}, onBack = {}, autonomous = on, onAutonomous = { toggled += it; on = it },
+            )
+        }
         compose.onNodeWithText(AutonomyCopy.GROUP).assertIsDisplayed()
         compose.onNodeWithText(AutonomyCopy.TITLE).assertIsDisplayed()
-        compose.onNodeWithTag("dev-autonomous").assertIsOff().performClick()
-        compose.onNodeWithTag("dev-autonomous").assertIsOn()
+        compose.onNodeWithTag("work-autonomous").assertIsOff().performClick()
+        compose.onNodeWithTag("work-autonomous").assertIsOn()
         compose.onNodeWithText(AutonomyCopy.TITLE).performClick()
-        compose.onNodeWithTag("dev-autonomous").assertIsOff()
+        compose.onNodeWithTag("work-autonomous").assertIsOff()
         assertEquals(listOf(true, false), toggled)
     }
 
@@ -387,15 +379,6 @@ class SettingsScreenTest {
         scrollTo(GroundingCopy.TITLE)
         compose.onNodeWithText(GroundingCopy.TITLE).performClick()
         assertEquals(listOf(true), toggled)
-    }
-
-    @Test
-    fun developerGroupsCoverAllEightSwitchesOnce() {
-        val speed = DeveloperSwitches.speed(SpeedFlags.OFF)
-        val experimental = DeveloperSwitches.experimental(SpeedFlags.OFF)
-        assertEquals(5, speed.size)
-        assertEquals(3, experimental.size)
-        assertEquals(8, (speed + experimental).map { it.id }.toSet().size)
     }
 
     private class Calls { var reset = 0; val network = mutableListOf<Boolean>() }
@@ -454,4 +437,43 @@ class SettingsScreenTest {
         compose.onNodeWithTag("sandbox-network").performClick()
         assertTrue(c.network == listOf(true))
     }
+
+    /** 已用空间:每个对话的工作区一行;有任务在跑的写明不能清、点不动;清理先确认,确认后才回调。 */
+    @Test
+    fun usageClearsAWorkspaceOnlyAfterConfirming() {
+        val usage = com.wangzan101.mika.cap.sandbox.SandboxUsage(
+            runtime = 300L shl 20, skills = 2L shl 20,
+            workspaces = listOf(
+                com.wangzan101.mika.cap.sandbox.WorkspaceUsage("c-a", "a", "查快递", 5L shl 20, busy = true),
+                com.wangzan101.mika.cap.sandbox.WorkspaceUsage("c-b", "b", "整理表格", 1L shl 20, busy = false),
+                com.wangzan101.mika.cap.sandbox.WorkspaceUsage("c-gone", null, null, 1024, busy = false),
+            ),
+        )
+        val cleared = mutableListOf<String>()
+        var all = 0
+        compose.setContent {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                AdvancedSection(
+                    status = SandboxStatus.Ready(network = false), networkAllowed = false, isolationIssue = false,
+                    onNetworkChange = {}, onReset = {}, usage = usage,
+                    onClearWorkspace = { cleared += it.dirName }, onClearAll = { all++ },
+                )
+            }
+        }
+        compose.onNodeWithText(SandboxCopy.USAGE_TITLE).assertExists()
+        compose.onNodeWithText("已删除的对话").assertExists()
+        compose.onNodeWithText("这个对话有任务在跑，暂时不能清理").assertExists()
+        compose.onNodeWithText("查快递").performScrollTo().performClick()
+        compose.onAllNodesWithText(SandboxCopy.CLEAR_TITLE).assertCountEquals(0)
+        compose.onNodeWithText("整理表格").performScrollTo().performClick()
+        compose.onNodeWithText(SandboxCopy.CLEAR_TITLE).assertIsDisplayed()
+        assertEquals(emptyList<String>(), cleared)
+        compose.onNodeWithText(SandboxCopy.CLEAR).performClick()
+        assertEquals(listOf("c-b"), cleared)
+        compose.onNodeWithText(SandboxCopy.CLEAR_ALL).performScrollTo().performClick()
+        compose.onNodeWithText(SandboxCopy.CLEAR_ALL_BODY).assertIsDisplayed()
+        compose.onNodeWithText(SandboxCopy.CLEAR).performClick()
+        assertEquals(1, all)
+    }
 }
+

@@ -10,7 +10,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -39,18 +38,6 @@ class ResourceScopeTest {
         assertTrue(outer.isCancelled)
         scope.close()
         assertEquals(listOf("display"), released)
-    }
-
-    /** 对照:旧写法(建完再记到字段)在同一时机丢掉资源。 */
-    @Test
-    fun assignAfterReturnLosesResource() = runBlocking {
-        var field: Res? = null
-        val outer = launch(Dispatchers.Default) {
-            val task = currentCoroutineContext().job
-            field = withContext(Dispatchers.IO) { Res("display").also { task.cancel() } }
-        }
-        outer.join()
-        assertEquals(null, field)
     }
 
     @Test

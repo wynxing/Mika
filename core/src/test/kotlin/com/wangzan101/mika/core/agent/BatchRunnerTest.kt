@@ -268,16 +268,6 @@ class BatchRunnerTest {
         assertTrue("was not run (target_unresolved)" in notRun.s("message"))
     }
 
-    @Test fun confirmationStopCarriesGuardVerdicts() = runTest {
-        val guards = OperationGuards()
-        val tap = """{"x":900,"y":950}"""
-        val parsed = kotlinx.serialization.json.Json.parseToJsonElement(tap).jsonObject
-        repeat(2) { guards.beforeAction("phone_tap", parsed) }
-        val r = runner(toolDispatcher(BatchScreen(home)), guards).run(steps(st("phone_tap", tap), st("phone_back")), "c1").content
-        assertEquals("confirmation_required", r.s("error"))
-        assertTrue(r["steps"]!!.jsonArray.single().jsonObject["guard"] == null)
-    }
-
     @Test fun withoutConfirmationToolMessageDoesNotAskForIt() = runTest {
         val r = runner(toolDispatcher(BatchScreen(home)), confirmations = null).run(steps(st("phone_back"), st("phone_tap", """{"x":900,"y":950}""")), "c1").content
         assertEquals("confirmation_required", r.s("error"))

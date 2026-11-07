@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="appaccess_title">应用访问</string>
+    <string name="appaccess_row_sub">按应用设置禁用和屏幕分享许可</string>
+    <string name="appaccess_intro">选择允许 Mika 通过标准手机工具读取和操作的应用。Shell 命令、沙箱和电脑接入（MCP）不受此设置限制。</string>
+    <string name="appaccess_privacy">分类会把应用名称和包名发送给 AI 模型；点「刷新应用列表」时会先征求你的同意。</string>
+    <string name="appaccess_unavailable">应用访问设置无法读取，标准手机访问已暂停。重置会清掉已保存的权限和分类。</string>
+    <string name="appaccess_reset">重置应用访问</string>
+    <string name="appaccess_search">搜索名称或包名</string>
+    <string name="appaccess_refreshing">正在分类…</string>
+    <string name="appaccess_refresh">刷新应用列表</string>
+    <string name="appaccess_recommend">推荐禁用</string>
+    <string name="appaccess_recommend_count">推荐禁用 · %1$d</string>
+    <string name="appaccess_allow_all">全部允许</string>
+    <string name="appaccess_risk_note">自动操作这类应用可能带来账号限制，用不上就禁用。</string>
+    <string name="appaccess_blocked">已禁用</string>
+    <string name="appaccess_allowed">允许</string>
+    <string name="appaccess_revoke_share">撤销 %1$s 的屏幕分享许可</string>
+
+    <string name="appaccess_send_title">把应用列表发送给 AI？</string>
+    <string name="appaccess_send_body">刷新会读取已安装的应用，并把应用名称和包名发送给你配置的 AI 模型，用来判断风险分类。应用里的内容不会被发送。</string>
+    <string name="appaccess_send_confirm">继续并分类</string>
+    <string name="appaccess_cancel">取消</string>
+
+    <string name="appaccess_recommend_title">推荐禁用金融交易应用</string>
+    <string name="appaccess_recommend_body">这些应用会被识别为金融交易类，而 Mika 现在仍能自动操作它们。可以逐个禁用，或一次全部禁用。</string>
+    <string name="appaccess_recommend_empty">没有需要禁用的应用。</string>
+    <string name="appaccess_block">禁用</string>
+    <string name="appaccess_block_all">全部禁用</string>
+
+    <string name="appaccess_edit_category">修改分类</string>
+    <string name="appaccess_category_manual">用户选择</string>
+
+    <string name="appaccess_error_save">保存失败</string>
+    <string name="appaccess_error_no_model">没有可用的模型，应用列表已刷新，但无法分类。</string>
+    <string name="appaccess_error_refresh">刷新失败</string>
+    <string name="appaccess_error_load">读取应用列表失败</string>
+
+    <string name="appaccess_category_finance">金融交易</string>
+    <string name="appaccess_category_social">社交通讯</string>
+    <string name="appaccess_category_game">游戏</string>
+    <string name="appaccess_category_shopping">购物生活</string>
+    <string name="appaccess_category_productivity">办公工具</string>
+    <string name="appaccess_category_media">影音内容</string>
+    <string name="appaccess_category_other">其他</string>
+    <string name="appaccess_category_unknown">未分类</string>
+
+    <string name="appaccess_share_title">分享 %1$s 的屏幕</string>
+    <string name="appaccess_share_body">此应用已禁用。屏幕分享许可只用于你主动分享，自动读取和操作仍然禁止。</string>
+    <string name="appaccess_share_allow">允许仅分享屏幕</string>
+    <string name="appaccess_share_unblock">允许此应用</string>
+    <string name="appaccess_share_cancel">取消分享</string>
+    <string name="appaccess_share_expired">屏幕分享许可已失效，请重新截屏</string>
+</resources>

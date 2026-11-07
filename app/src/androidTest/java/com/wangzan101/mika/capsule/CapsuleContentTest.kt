@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.width
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.wangzan101.mika.ui.theme.MikaTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -109,7 +110,7 @@ class CapsuleContentTest {
         view = view.copy(pill = false)
         compose.waitForIdle()
         val ball = compose.onNodeWithTag("capsule-ball").getBoundsInRoot()
-        assert(ball.width < wide) { "ball should be narrower: ${ball.width} vs $wide" }
+        assertTrue("ball should be narrower: ${ball.width} vs $wide", ball.width < wide)
         assertEquals(ball.height.value, ball.width.value, 1f)
         compose.onNodeWithTag("capsule-badge", useUnmergedTree = true).assertIsDisplayed()
     }
@@ -135,7 +136,7 @@ class CapsuleContentTest {
         view = view.copy(widthEpoch = 2)
         compose.waitForIdle()
         val narrow = compose.onNodeWithTag("capsule").getBoundsInRoot().width
-        assert(narrow < wide) { "new epoch should re-fit: $narrow vs $wide" }
+        assertTrue("new epoch should re-fit: $narrow vs $wide", narrow < wide)
     }
 
     /** 一颗淡下去时外圈和角标照样在;读屏时能「移到屏幕另一边」。 */

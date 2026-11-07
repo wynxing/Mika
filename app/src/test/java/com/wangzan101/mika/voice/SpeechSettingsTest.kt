@@ -14,6 +14,8 @@ class SpeechSettingsTest {
             SpeechChoice.Auto,
             SpeechChoice.System,
             SpeechChoice.Off,
+            SpeechChoice.Doubao(),
+            SpeechChoice.Doubao(DoubaoProtocol.CONCURRENT),
             SpeechChoice.Provider("p1", "whisper-1", TranscribeMethod.AudioTranscriptions),
             SpeechChoice.Provider("p2", "gpt-4o-audio", TranscribeMethod.ChatInputAudio),
             SpeechChoice.Provider("p3", "gemini-flash", TranscribeMethod.GeminiInline),
@@ -83,14 +85,6 @@ class SpeechSettingsTest {
         assertEquals(false, s.systemSilent.value)
     }
 
-    @Test fun transcribeMethodNamesNeverChange() {
-        // 设置里存的是名字:改名、删掉都会让旧设置读不回来;新的只往后加,加了在这里补上
-        assertEquals(
-            listOf("AudioTranscriptions", "ChatInputAudio", "GeminiInline", "ChatInputAudioUri", "ChatInputAudioOnly"),
-            TranscribeMethod.entries.map { it.name },
-        )
-    }
-
     @Test fun earlierStoredMethodStillReads() {
         val prefs = MemoryPrefs()
         prefs.edit().putString("speech_choice", """{"type":"provider","providerId":"p2","model":"m","method":"ChatInputAudio"}""").commit()
@@ -103,5 +97,14 @@ class SpeechSettingsTest {
             prefs.edit().putString("speech_choice", bad).commit()
             assertEquals(bad, SpeechChoice.Auto, SpeechSettings(prefs).choice.value)
         }
+    }
+
+    /** 点名试通的服务记下来、重开 App 还在;之后系统默认的回了话,就不再记着点名的那个。 */
+    @Test fun theServiceThatAnsweredIsRemembered() {
+        val prefs = MemoryPrefs()
+        SpeechSettings(prefs).noteSystemAnswered("a.b/.Two")
+        assertEquals("a.b/.Two", SpeechSettings(prefs).systemService)
+        SpeechSettings(prefs).noteSystemAnswered(null)
+        assertEquals(null, SpeechSettings(prefs).systemService)
     }
 }

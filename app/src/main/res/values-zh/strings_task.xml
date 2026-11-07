@@ -27,11 +27,18 @@
         <item quantity="other">排队中:前面还有 %1$d 个任务</item>
     </plurals>
     <string name="fail_no_main_model">还没有能用的主模型:请在设置里添加一个支持工具调用的模型。</string>
+    <string name="fail_model_untested">主模型在 %1$s 还没测试通过。去设置 › 模型 › %1$s 点「重新测试」查一下它能不能用。</string>
     <string name="fail_no_web">设备没有可用的网页能力，条件检查无法运行</string>
     <string name="task_waiting_display">排队中:等另一个任务做完再开始</string>
     <string name="task_no_phone_helper">手机操作还没准备好:请在 Mika 里完成「设置手机操作」。网页和文件类的事不受影响。</string>
     <string name="task_no_a11y">Mika 的无障碍服务没有开启:请在系统设置的无障碍里打开 Mika。</string>
+    <string name="task_a11y_not_running">Mika 的无障碍服务已开启，但安卓还没有连接它。请在系统设置的无障碍里将 Mika 关闭后重新开启；如果安卓阻止开启，请先在 Mika 的应用信息里允许受限制的设置。</string>
     <string name="task_error">任务出错:%1$s</string>
+    <string name="task_app_blocked">「%1$s」已被设为禁用，Mika 不能自动读取或操作它。到 设置 › 应用访问 里允许后再试。</string>
+    <string name="task_app_this_app">该应用</string>
+    <string name="task_app_access_unavailable">应用访问设置无法读取。请到 设置 › 应用访问 里重置后再试。</string>
+    <string name="task_app_protected">这个界面需要你亲自操作，Mika 不能自动处理。</string>
+    <string name="task_app_unverified">没能确认当前是哪个应用，这次没有继续操作。请重试，或先打开目标应用。</string>
     <string name="task_condition_interrupted">条件检查中断</string>
     <string name="task_check_unfinished">定时检查未完成：%1$s</string>
     <string name="task_may_make_sound">该 App 可能会出声</string>
@@ -47,6 +54,7 @@
     <string name="task_too_old">手机 App 操作需要安卓 12 及以上。仍然可以聊天、使用网页和沙箱。</string>
     <string name="task_shell_died">手机操作助手断开了,虚拟屏随之关闭;等它重新连上后再试</string>
     <string name="task_running">正在执行</string>
+    <string name="channel_task_accepted">收到，任务已登记。</string>
     <string name="task_step_note">第 %1$d 步:%2$s</string>
     <string name="task_wait_unlock">等待解锁</string>
     <string name="task_wait_unlock_body">解锁手机后会自动继续</string>
@@ -57,4 +65,17 @@
     <string name="task_stopped_body">你停止了这个任务</string>
     <string name="gate_user_on_page">你在操作，Mika 已暂停</string>
     <string name="task_no_phone_helper_usb">手机助手已停止(多半是手机重启过):打开 Mika,再运行一次 USB 启动命令,命令在「设置手机操作」里可以复制。网页和文件类的事不受影响。</string>
+    <string name="drawer_screens">后台屏</string>
+    <string name="screens_title">后台屏</string>
+    <string name="screens_empty">现在没有任务在跑。</string>
+    <string name="screens_note">每个在跑的任务在自己的后台屏上操作，不占用你的屏幕。点一个任务回到它的对话。</string>
+    <string name="screens_using_app">正在用%1$s</string>
+    <string name="screens_using_browser">正在用浏览器</string>
+    <string name="screens_no_app">还没打开 App</string>
+    <string name="screens_app_unknown">暂时看不到在用哪个 App</string>
+    <string name="screens_preview">看画面</string>
+    <string name="screens_hide_preview">收起画面</string>
+    <string name="screens_waiting">等待中</string>
+    <string name="screens_needs_you">等你处理</string>
+    <string name="screens_zoom">放大这块屏</string>
 </resources>

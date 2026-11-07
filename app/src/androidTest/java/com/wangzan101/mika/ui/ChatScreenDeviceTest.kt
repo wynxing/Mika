@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import com.wangzan101.mika.cap.sandbox.ShareExporter
 import com.wangzan101.mika.cap.sandbox.SandboxState
 import com.wangzan101.mika.cap.sandbox.SandboxDirs
+import com.wangzan101.mika.core.agent.SpeedFlags
 import com.wangzan101.mika.core.cap.sandbox.SandboxStatus
 import com.wangzan101.mika.core.agent.Turn
 import com.wangzan101.mika.chat.ConversationStore
@@ -15,7 +16,6 @@ import android.net.Uri
 import android.content.Context
 import android.graphics.Bitmap
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -70,6 +70,7 @@ class ChatScreenDeviceTest {
     private val model = ScriptedModel().apply { intent = "ACT" }
     private val vm get() = (context.applicationContext as MikaApp).chat
     private val anyway = Prerequisites.Check(emptyList())
+    private var savedSpeed: SpeedFlags? = null
 
     @Before
     fun setUp() {
@@ -84,7 +85,7 @@ class ChatScreenDeviceTest {
         DeviceTaskState.runs.value.forEach { it.cancel() }
         pollUntil(20_000) { DeviceTaskState.busy.value.takeIf { !it } }
         // 并行开关是持久设置,别的测试(或中途崩掉的)可能留着 true;每个测试自己决定,默认关
-        FeatureFlags.get(context).let { f -> f.setSpeed(f.speedFlags().copy(parallelTasks = false)) }
+        FeatureFlags.get(context).let { f -> savedSpeed = f.speedFlags(); f.setSpeed(savedSpeed!!.copy(parallelTasks = false)) }
         // 对话页还挂着上一个对话的结束状态时 newConversation 会被当成「忙」而不执行:等它回到空闲,并确认真换成了空对话
         assertNotNull("composer never went idle", pollUntil(20_000) { true.takeIf { !vm.busy() } })
         compose.runOnUiThread { vm.newConversation() }
@@ -101,6 +102,8 @@ class ChatScreenDeviceTest {
         testTasks.modelFactory = TaskEnvironment.defaultModelFactory
         testTasks.lightModelFactory = TaskEnvironment.defaultLightModelFactory
         testTasks.visionModelFactory = TaskEnvironment.defaultVisionModelFactory
+        // 把持久设置还原成本次测试之前的样子,不把设备留在测试用的开关上
+        savedSpeed?.let { FeatureFlags.get(context).setSpeed(it) }
     }
 
     private fun TaskState.active() = this !is TaskState.Succeeded && this !is TaskState.Failed && this !is TaskState.Cancelled && this != TaskState.Idle
@@ -218,13 +221,31 @@ class ChatScreenDeviceTest {
         shot("08-drawer")
     }
 
-    /** 附件按钮只在沙箱就绪时出现。 */
     @Test
-    fun attachButtonOnlyWhenSandboxReady() {
-        val ready = SandboxState.get(context).status.value is SandboxStatus.Ready
+    fun sentTurnIsVisibleAtTheTailOfALongConversation() {
+        val store = ConversationStore(context)
+        val id = store.newConversation()
+        repeat(30) { i ->
+            store.append(id, Turn("旧问题 $i", "旧回答 $i\n" + "这是一段用于撑满长会话视口的历史内容。\n".repeat(8), "succeeded"), emptyList())
+        }
+        compose.runOnUiThread { vm.openConversation(id) }
+        compose.waitUntil(5_000) { vm.ui.value.conversationId == id && vm.ui.value.exchanges.size == 30 }
+        compose.waitForIdle()
+
+        val message = "刚发送的新一轮必须直接显示"
+        compose.runOnUiThread { assertTrue(vm.send(message, anyway)) }
+        compose.waitUntil(5_000) { vm.ui.value.exchanges.size == 31 }
+        // 不能只 assertExists:回归的正是新行已存在、却被旧布局行数留在视口外。
+        compose.onNodeWithText(message).assertIsDisplayed()
+    }
+
+    /** 附件按钮只在沙箱不是「此设备不支持」时出现(未安装、安装中、坏了都还能装、能修)。 */
+    @Test
+    fun attachButtonHiddenOnlyWhenSandboxUnsupported() {
+        val unsupported = SandboxState.get(context).status.value is SandboxStatus.Unsupported
         compose.waitForIdle()
         val nodes = compose.onAllNodesWithContentDescription("添加附件").fetchSemanticsNodes()
-        assertEquals("sandbox ready=$ready", ready, nodes.isNotEmpty())
+        assertEquals("sandbox unsupported=$unsupported", !unsupported, nodes.isNotEmpty())
     }
 
     /** 文件卡片显示名字和大小;点开文本文件进 App 里的查看页(不再交给系统选 App),看得到文件内容,返回回到对话。 */

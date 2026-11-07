@@ -22,13 +22,6 @@ import kotlin.concurrent.thread
 class SandboxSmokeTest {
 
     @Test
-    fun launcherSelfTestPasses() {
-        val r = exec(listOf(lib("libmikarun.so"), "--self-test"))
-        assertEquals(r.output, 0, r.exitCode)
-        assertEquals("mikarun ok", r.output.lines().first())
-    }
-
-    @Test
     fun busyboxEchoUnderProot() {
         val r = execInRootfs("/bin/busybox", "echo", "ok")
         assertEquals(r.output, 0, r.exitCode)

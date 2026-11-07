@@ -7,12 +7,10 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import com.wangzan101.mika.core.testing.WEB_SCRIPT_TOOL
 import com.wangzan101.mika.core.assembly.toolDispatcher
 import com.wangzan101.mika.core.assembly.allTools
-import com.wangzan101.mika.core.assembly.knownToolNames
 import com.wangzan101.mika.core.testing.SANDBOX_TOOLS
 import com.wangzan101.mika.core.testing.WEB_TOOLS
 
@@ -24,7 +22,7 @@ class ToolRiskTest {
     private val oldWriting = both("tap", "scroll", "swipe", "type_text", "clear_text", "back", "press_key", "diagnose") + setOf(
         "phone_launch_app", "phone_share_text", "phone_gesture", "hand_to_user",
         "phone_set_alarm", "phone_set_timer", "phone_show_alarms", "phone_add_calendar_event", "phone_set_wheel",
-        "web_navigate", "web_tabs", "web_upload", "web_interact", "web_site_mode", "phone_open_link", "web_keep_open",
+        "web_navigate", "web_tabs", "web_upload", "web_interact", "web_site_mode", "phone_open_link", "web_keep_open", "phone_app_after_task",
     )
     private val oldSandbox = setOf("run_command", "run_bundled_script", "read_file", "write_file", "search_files", "share_file")
     private val oldWeb = setOf(
@@ -45,9 +43,13 @@ class ToolRiskTest {
     }
 
     @Test fun readCallsRefuseWhatTheOldListsRefused() = runTest {
-        val refused = oldWriting + oldSandbox + WEB_SCRIPT_TOOL + setOf("phone_find", "phone_collect", "phone_dialog", "phone_run", "phone_system_command", "schedule_task", "spawn_agent")
+        val refused = oldWriting + oldSandbox + WEB_SCRIPT_TOOL +
+            setOf("phone_find", "phone_collect", "phone_dialog", "phone_run", "phone_system_command", "schedule_task", "spawn_agent", "settings_set", "root_run_command", "web_search")
         assertEquals(refused, allTools().filter { !it.readOnly }.map { it.name }.toSet())
-        val d = toolDispatcher(FakeScreen())
+        // root 命令只在给了端口时登记:给一个,所有工具都在
+        val d = toolDispatcher(FakeScreen(), root = object : com.wangzan101.mika.core.cap.root.RootPort {
+            override suspend fun run(command: String, timeoutMs: Long) = com.wangzan101.mika.core.cap.root.RootRun.Unavailable
+        })
         for (name in names) {
             val r = d.executeRead(Part.ToolCall("c", name, "{}")).content
             assertEquals(name, name in refused, r["error"] == JsonPrimitive("not_a_read"))
@@ -71,8 +73,7 @@ class ToolRiskTest {
         for (t in allTools().map { it.name } + "do_steps" + "unknown") assertEquals(t, old[t], gateTargetOf(t))
     }
 
-    @Test fun everyToolDeclaresOneGroupAndUniqueName() {
+    @Test fun everyToolHasAUniqueKnownName() {
         assertEquals(names.size, names.toSet().size)
-        assertTrue(knownToolNames().containsAll(names))
     }
 }

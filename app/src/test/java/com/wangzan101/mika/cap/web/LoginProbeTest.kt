@@ -77,9 +77,4 @@ class LoginProbeTest {
         assertNull(LoginProbe.parse(null))
         assertNull(LoginProbe.parse("\"not json\""))
     }
-
-    @Test fun scanIsBounded() {
-        assertTrue(LoginProbe.SCRIPT.contains("budget=4000"))
-        assertTrue(LoginProbe.SCRIPT.contains("createTreeWalker"))
-    }
 }

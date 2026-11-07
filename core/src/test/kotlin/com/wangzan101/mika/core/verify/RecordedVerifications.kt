@@ -3,7 +3,6 @@ package com.wangzan101.mika.core.verify
 import com.wangzan101.mika.core.eval.RunFacts
 import com.wangzan101.mika.core.record.RunEvent
 import com.wangzan101.mika.core.testing.RECORDED_TOOLS
-import com.wangzan101.mika.core.tool.Verb
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -65,34 +64,6 @@ internal object RecordedVerifications {
         val fresh = seen.filterIsInstance<RunEvent.Observed>().lastOrNull { it.kind == "read" }?.text?.takeIf { it.isNotBlank() }
         return listOfNotNull(fresh) + RunFacts.ledger(seen, RECORDED_TOOLS).forAnswer(goal, answer).map { it.text }
     }
-
-    /** 按证据账本重建运行时交给核查模型的条目(全文;节选见 [Verifier.excerpts])。 */
-    fun ledgerEntries(events: List<RunEvent>, v: Int, f: Int, goal: String, answer: String): List<com.wangzan101.mika.core.observation.Observation> =
-        RunFacts.ledger(before(events, v, f), RECORDED_TOOLS).forAnswer(goal, answer)
-
-    /**
-     * 换成证据账本之前,运行时核查器拿到的那几格证据(旧的 EvidenceLog 窗口,只留作对比):最近 3 次读屏(最后一次当作 finish 后重读的那一屏)、
-     * 最近 3 次读网页的结果(每条至多 6000 字)、最近 6 条沙箱输出(按头尾截到 4000 字)、最近 12 条打开网页 / App 的事实。
-     * finish 之后重读的一屏和网页正文开头没有记下来,这里用最后一次读屏代替。
-     */
-    fun liveSources(events: List<RunEvent>, v: Int, f: Int): List<String> {
-        val results = before(events, v, f).filterIsInstance<RunEvent.ToolResult>()
-        fun text(r: RunEvent.ToolResult) = runCatching { strings(Json.parseToJsonElement(r.resultJson)).joinToString("\n") }.getOrDefault(r.resultJson)
-        fun clip(t: String) = if (t.length <= OUTPUT_CHARS) t else t.take(OUTPUT_CHARS * 3 / 4) + "\n" + t.takeLast(OUTPUT_CHARS / 4)
-        val screens = before(events, v, f).filterIsInstance<RunEvent.Observed>().filter { it.kind == "read" }.map { it.text }.takeLast(RECENT)
-        val web = results.filter { RECORDED_TOOLS.verb(it.tool) in WEB_READS }.map { text(it).take(WEB_CHARS) }.takeLast(RECENT)
-        val sandbox = results.filter { RECORDED_TOOLS.verb(it.tool) in SANDBOX }.map { clip(text(it)) }.takeLast(OUTPUTS)
-        val facts = results.filter { RECORDED_TOOLS.verb(it.tool) in FACTS }.map { clip(text(it)) }.takeLast(OUTPUTS * 2)
-        return (screens + web + sandbox + facts).filter { it.isNotBlank() }
-    }
-
-    private const val RECENT = 3
-    private const val WEB_CHARS = 6000
-    private const val OUTPUTS = 6
-    private const val OUTPUT_CHARS = 4000
-    private val WEB_READS = setOf(Verb.ReadPage, Verb.EvaluateJs, Verb.Downloads, Verb.Capture, Verb.Script)
-    private val SANDBOX = setOf(Verb.RunCommand, Verb.RunBundledScript, Verb.ReadFile, Verb.WriteFile, Verb.SearchFiles, Verb.ShareFile)
-    private val FACTS = setOf(Verb.Navigate, Verb.Tabs, Verb.LaunchApp)
 
     /** 被核的那次回答:回答是任务的结局时取 task_ended 里的全文(回复里记的可能截短了)。 */
     fun answer(events: List<RunEvent>, f: Int): String? {

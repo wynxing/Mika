@@ -39,6 +39,27 @@ class RunTimelineViewModelTest {
 
     private fun ready(runId: String) = RunTimelineViewModel(store, runId).load() as TimelineUi.Ready
 
+    /** 任务还在跑、还没有结束事件时算「进行中」:页面据此每秒重读,跑完就停。 */
+    @Test fun anUnfinishedRunOfALiveTaskReadsAsRunning() {
+        val h = store.open("打开设置")
+        store.append(h.runId, RunEvent.ModelReply(clock + 1_000, 1, "", null, null, 500, 10, 0, 900, repliedAtMs = clock + 1_000))
+        val live = RunTimelineViewModel(store, h.runId, alive = { it == h.runId }).load() as TimelineUi.Ready
+        assertTrue("没结束就算在跑", live.header.running)
+        store.append(h.runId, RunEvent.TaskEnded(clock + 2_000, "succeeded", "好了"))
+        val done = RunTimelineViewModel(store, h.runId, alive = { it == h.runId }).load() as TimelineUi.Ready
+        assertFalse("结束之后不再重读", done.header.running)
+    }
+
+    /** 没有结束记录、任务也已经不在了(进程被杀、记录没写完):算已结束,不一直按秒重读。 */
+    @Test fun anUnfinishedRunWhoseTaskIsGoneIsNotRunning() {
+        val h = store.open("打开设置")
+        store.append(h.runId, RunEvent.ModelReply(clock + 1_000, 1, "", null, null, 500, 10, 0, 900, repliedAtMs = clock + 1_000))
+        val gone = RunTimelineViewModel(store, h.runId, alive = { false }).load() as TimelineUi.Ready
+        assertFalse(gone.header.running)
+        val other = RunTimelineViewModel(store, h.runId, alive = { it == "another-run" }).load() as TimelineUi.Ready
+        assertFalse("别的任务在跑不算这一次", other.header.running)
+    }
+
     @Test fun usedMemoryAppearsInProcessHeader() {
         val id = run("总结") { event(RunEvent.MemoryUsed(clock, listOf("m1", "m2"))) }
         val ui = RunTimelineViewModel(store, id, resolveMemory = { ids -> ids.map { "记忆 $it" } }).load() as TimelineUi.Ready
@@ -56,6 +77,36 @@ class RunTimelineViewModelTest {
         assertEquals(4_000L, m.totalMs)
         assertEquals(3_000L, m.firstFeedbackMs)
         assertEquals(1, m.modelCalls)
+    }
+
+    @Test fun headerCarriesTheStepLimit() {
+        val limited = run("查天气") {
+            event(RunEvent.TaskStarted(clock, "查天气", "m1", stepLimit = 60))
+            event(RunEvent.TaskEnded(clock + 1_000, "succeeded", "晴"))
+        }
+        assertEquals(60, ready(limited).header.stepLimit)
+        val unlimited = run("看电量") {
+            event(RunEvent.TaskStarted(clock, "看电量", "m1"))
+            event(RunEvent.TaskEnded(clock + 1_000, "succeeded", "85%"))
+        }
+        assertNull(ready(unlimited).header.stepLimit)
+    }
+
+    /** 步数用完后的收尾那一轮记作第上限加一步:显示用了几步时不算它,不会出现 4 / 3。 */
+    @Test fun stepsUsedNeverExceedsTheLimit() {
+        val id = run("查快递") {
+            event(RunEvent.TaskStarted(clock, "查快递", "m1", stepLimit = 3))
+            (1..4).forEach { step -> event(RunEvent.ModelReply(clock + step * 1_000L, step, "", null, null, 500, 10, 0, 900, repliedAtMs = clock + step * 1_000L)) }
+            event(RunEvent.TaskEnded(clock + 5_000, "failed", "已达到 3 步上限"))
+        }
+        assertEquals(3, ready(id).header.stepsUsed)
+        val early = run("看电量") {
+            event(RunEvent.TaskStarted(clock, "看电量", "m1", stepLimit = 30))
+            event(RunEvent.ModelReply(clock + 1_000, 1, "", null, null, 500, 10, 0, 900, repliedAtMs = clock + 1_000))
+            event(RunEvent.ModelReply(clock + 2_000, 2, "85%", null, null, 500, 10, 0, 900, repliedAtMs = clock + 2_000))
+            event(RunEvent.TaskEnded(clock + 3_000, "succeeded", "85%"))
+        }
+        assertEquals(2, ready(early).header.stepsUsed)
     }
 
     @Test fun groupsEventsIntoSteps() {
@@ -203,7 +254,6 @@ class RunTimelineViewModelTest {
     @Test fun missingRunShowsExpired() {
         assertEquals(TimelineUi.Expired, RunTimelineViewModel(store, "20250101-000000-abcdef").load())
         assertEquals(TimelineUi.Expired, RunTimelineViewModel(store, "../../etc").load())
-        assertEquals(TimelineUi.EXPIRED_TEXT, "这次的记录已过期")
         val id = run("x") { event(RunEvent.TaskEnded(clock, "cancelled", "")) }
         tmp.root.resolve("files/runs/$id").deleteRecursively()
         assertEquals(TimelineUi.Expired, RunTimelineViewModel(store, id).load())

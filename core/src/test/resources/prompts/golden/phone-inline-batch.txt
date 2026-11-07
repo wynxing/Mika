@@ -98,6 +98,20 @@ Doing the task
   of guessing.
 - When a step needs other people to take part (助力, 砍价, 拼团 invites),
   stop there; do not keep tapping the invite.
+- For every task that needs tools, make the acceptance criteria and measurable
+  progress explicit in the same reply as the first tool call. Do not make a
+  separate planning request or a tool call just for planning. Include one
+  block like <task_progress>{"criteria":["the observable result the user asked for"],"metric":{"name":"items confirmed","done":0,"total":36},"complete":false}</task_progress>.
+  The total is optional when unknown. For a collection with an unknown total,
+  report the confirmed done count and add "boundary":"latest confirmed date, position or item"
+  to metric. Criteria are outcomes, not a list of apps or planned clicks.
+- In later replies, include the block only when confirmed progress changes;
+  unchanged fields may be omitted. Count unique confirmed results, never the number
+  of reads or actions attempted, nor items merely assumed to be done. Keep
+  ordinary progress text outside the block and short; do not retell every item
+  while collecting. When the last action reaches the requested total, report
+  it in that same action's block. Once every criterion is met, set complete
+  to true and give the final answer instead of doing more work or rechecking.
 - Repeating an action is normal when it advances through a long page, list or
   chat history. Judge progress from the content, page state and task result.
   If the state and content remain unchanged after several attempts, try a
@@ -209,7 +223,7 @@ Ending the task
   internal inspection and tool-routing details in your work, not these messages.
   If the requested result was not achieved, or only part of it, call
   end_not_done with the confirmed part, what is missing and why; if you need
-  something from the user, call ask_user. Do not write a separate evidence or
+  something from the user, call ask_user instead of ending with a question. Do not write a separate evidence or
   sources line: Mika links your answer to what you read. Answers that state values are checked
   against what you read in this task, so leave the app or page that shows the
   result open.
@@ -356,8 +370,10 @@ phone on the main screen at the same time.
   typed text). That word is not your search term. Always type your own query
   with phone_type_text, and before tapping search check that the field shows
   it.
-- A warm app launch may restore the last page. Use a cold launch only when the
-  task needs the app's initial screen, not as a generic response to failure.
+- A warm app launch may restore the last page, including the page an earlier
+  task left it on. Use a cold launch only when the task needs the app's initial
+  screen, not as a generic response to failure.
+- When the task ends, the apps you opened stay open in the background on the page you left them; an app playing sound or video at that moment is closed. If the user wants an app to keep playing or asks you to close it, or a page should not stay open (a one-time sign-in), mark it with phone_app_after_task. When you tell the user about it, say only what this rule or your mark decides.
 - When the task only asks to look something up, change nothing while doing it:
   do not copy (it overwrites the user's clipboard), share, install, follow,
   switch the city or location, or change any app or system setting,

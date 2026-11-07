@@ -17,10 +17,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * OpenAI Chat Completions 兼容端点(DeepSeek/Qwen/Kimi/GLM/OpenRouter/本地服务等)。差异只放在 [capabilities]。
@@ -57,12 +55,13 @@ class OpenAiCompatModel(
     }
 
     override suspend fun complete(system: String, messages: List<Message>, tools: List<ToolSpec>): ModelReply {
-        val (status, retryAfter, text) = HttpSupport.execute(http, request(system, messages, tools, stream = false))
+        val response = HttpSupport.execute(http, request(system, messages, tools, stream = false))
+        val (status, retryAfter, text) = response
         if (status !in 200..299) throw mapError(status, retryAfter, text)
         // 有的兼容端点不守 OpenAI 的默认值:没让流式也照样回 SSE(本地、局域网上的自建服务常见)。按流读完再拼,别把 `data:` 当成坏 JSON。
         if (!looksLikeEvents(text)) return parse(text)
         val stream = OpenAiStream({}, ::parseUsage, ::thinking)
-        eventsOf(text).forEach(stream::accept)
+        response.replay(eventsOf(text), stream::accept)
         return stream.finish()
     }
 
@@ -90,7 +89,7 @@ class OpenAiCompatModel(
         return stream.finish()
     }
 
-    private fun request(system: String, messages: List<Message>, tools: List<ToolSpec>, stream: Boolean, includeUsage: Boolean = true): Request {
+    private suspend fun request(system: String, messages: List<Message>, tools: List<ToolSpec>, stream: Boolean, includeUsage: Boolean = true): Request {
         val payload = buildJsonObject {
             put("model", model)
             reasoningEffort?.let { put("reasoning_effort", it) }
@@ -112,7 +111,7 @@ class OpenAiCompatModel(
             .withHeaders(headers)
             .header("Accept", if (stream) "text/event-stream" else "application/json")
             .apply { if (!apiKey.isNullOrEmpty()) header("Authorization", "Bearer $apiKey") }
-            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .postInference(InferenceProtocol.Chat, payload)
             .build()
     }
 
@@ -315,7 +314,9 @@ class OpenAiCompatModel(
         val inT = int(u, "prompt_tokens") ?: if (hit != null && miss != null) hit + miss else return null
         val outT = int(u, "completion_tokens") ?: 0
         val cached = maxOf(int(u["prompt_tokens_details"] as? JsonObject, "cached_tokens") ?: 0, hit ?: 0).coerceAtMost(inT)
-        return Usage(inT, outT, cached)
+        // completion_tokens 含思考;有的服务商在 completion_tokens_details.reasoning_tokens 里单独报
+        val reasoning = (int(u["completion_tokens_details"] as? JsonObject, "reasoning_tokens") ?: 0).coerceIn(0, outT)
+        return Usage(inT, outT, cached, reasoning)
     }
 }
 
@@ -338,16 +339,17 @@ private class OpenAiStream(
     private var done = false
     private var chunks = 0
 
-    fun accept(data: String) {
-        if (data == "[DONE]") { done = true; return }
+    fun accept(data: String): Boolean {
+        if (data == "[DONE]") { done = true; return true }
         val root = try { json.parseToJsonElement(data).jsonObject }
         catch (e: Exception) { throw ModelError.BadResponse("流式响应不是合法 JSON", e) }
-        if (root["error"] != null) throw ModelError.BadResponse(root["error"].toString().take(200))
+        // 有的服务流式请求一开头就出错时回 200,在事件流里给一帧错误;说的是超长,和 400 一样按超长处理
+        root["error"]?.toString()?.let { e -> throw if (ModelHttp.saysContextTooLong(e)) ModelError.ContextTooLong() else ModelError.BadResponse(e.take(200)) }
         chunks++
         usageOf(root["usage"])?.let { usage = it }
-        val choice = (root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return
+        val choice = (root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return false
         (choice["finish_reason"] as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotEmpty)?.let { reason = it }
-        val delta = choice["delta"] as? JsonObject ?: return
+        val delta = choice["delta"] as? JsonObject ?: return false
         ReasoningVia.fields.forEach { via ->
             (delta[via.field!!] as? JsonPrimitive)?.contentOrNull?.let { appendThinking(it, via) }
         }
@@ -369,6 +371,7 @@ private class OpenAiStream(
             (fn?.get("name") as? JsonPrimitive)?.contentOrNull?.let { call.name.append(it) }
             (fn?.get("arguments") as? JsonPrimitive)?.contentOrNull?.let { call.args.append(it) }
         }
+        return done
     }
 
     /** 一次回复里思考只按最先收到的位置记(同一家不会换位置;两个字段都给时只记一份)。 */

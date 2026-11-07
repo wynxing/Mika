@@ -101,7 +101,7 @@ class ToolDispatcher internal constructor(
     fun preload(task: String, previous: Collection<String>): List<String> =
         capabilities.filter { it.folds && (it.id in previous || it.preload(task)) }.map { it.id }.filter(::expand)
 
-    /** 用户这句话里他自己打的字:和各能力有关的说明去掉(见 [Capability.userWords])。 */
+    /** 用户这句话去掉各能力的说明(见 [Capability.userWords]);他这次打的字还要再去掉引用和附件行,见 [com.wangzan101.mika.core.agent.UserWords.typed]。 */
     fun userWords(text: String): String = capabilities.fold(text) { t, c -> c.userWords(t) }
 
     private fun openSet(): Set<String> = expanded.let { e -> if (e.any { it in screenGroups }) e + ToolGroups.SCREENS else e }
@@ -124,7 +124,7 @@ class ToolDispatcher internal constructor(
     val seesImages: Boolean get() = ctx.config.visionEnabled
     /** 写操作成功后等界面稳定再读一屏,把与上一屏的差异放进结果的 screen 字段。 */
     val inlineScreen: Boolean get() = ctx.config.inlineScreen
-    /** 用户本次说过的话,memory_save 的引文据此校验;AgentLoop 往里加。 */
+    /** 用户本次说过的话,memory_save / memory_edit 的引文据此校验;AgentLoop 往里加。 */
     val utterances: UserUtterances? get() = ctx.config.utterances
     private val imageOps: ImageOps? get() = ctx.config.imageOps
 
@@ -280,6 +280,8 @@ class ToolDispatcher internal constructor(
             try {
                 if (!tool.yieldsToSteer) tool.execute(args, ctx)
                 else waitOrSteer { tool.execute(args, ctx) } ?: failCode(SKIPPED_FOR_NEW_MESSAGE)
+            } catch (e: com.wangzan101.mika.core.access.AppAccessDenied) {
+                throw e
             } catch (e: ArgError) {
                 invalid(e)
             } catch (e: CancellationException) {
@@ -333,7 +335,9 @@ class ToolDispatcher internal constructor(
 
     /** 工具声明的风险;不认识的名字为 null。 */
     fun declaredRisk(name: String): Risk? = registry.declared(name)?.risk
-    fun approvalRisk(name: String): com.wangzan101.mika.core.action.Risk? = registry.declared(name)?.approvalRisk
+    /** 工具按这次的参数声明的审批风险(不在屏上的工具才有);没声明为 null。 */
+    fun approvalRisk(name: String, args: JsonObject = JsonObject(emptyMap())): com.wangzan101.mika.core.action.Risk? =
+        registry.declared(name)?.approvalRisk(args)
 
     /** ask_user 拿到的用户回答;核查器按用户给的事实对照。 */
     /** 用户发来的一屏(屏上的字)也是依据:回答里说的屏上内容从这里来。 */
@@ -436,7 +440,7 @@ class ToolDispatcher internal constructor(
         links.forEach { ctx.allowedLinks += it.uri to it.packageName }
     }
 
-    /** 本次任务里 memory_save 存下的(结果卡片显示「记住了」并可撤销)。 */
+    /** 本次任务里 memory_save / memory_edit 写下的(结果卡片显示变更并可撤销)。 */
     val savedChanges: List<Change> get() = ctx.savedChanges
 
     private companion object {

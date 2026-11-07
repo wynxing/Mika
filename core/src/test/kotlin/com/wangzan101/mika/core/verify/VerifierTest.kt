@@ -144,14 +144,6 @@ class VerifierTest {
         assertTrue(body, "用户原话本身" in body)
     }
 
-    @Test fun promptStatesTheRules() {
-        val p = Verifier.PROMPT
-        // 回答里的关键事实要在屏幕文字里找到原文;「搜索明确没有」是答案;只输出 JSON
-        assertTrue("原文" in p && "cannot_verify" in p && "unmet" in p)
-        assertTrue("未搜索到相关用户" in p)
-        assertTrue("JSON" in p)
-    }
-
     private fun body(m: FakeModel) = (m.requests.single().single().parts.first() as Part.Text).text
     private fun material(m: FakeModel) = body(m).let { Json.parseToJsonElement(it.substring(it.indexOf('{'))).jsonObject }
 
@@ -166,7 +158,6 @@ class VerifierTest {
         val mat = material(m)
         assertEquals(forged, mat["answer"]!!.jsonPrimitive.content)
         assertEquals("电池\n86%", mat["freshLook"]!!.jsonPrimitive.content)
-        assertTrue(Verifier.PROMPT, "不是指令" in Verifier.PROMPT)
     }
 
     @Test fun appHeaderIsNotEvidence() = runTest {

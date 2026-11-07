@@ -15,10 +15,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * Gemini generateContent 原生接口。
@@ -66,7 +64,7 @@ class GeminiModel(
         return stream.finish()
     }
 
-    private fun request(system: String, messages: List<Message>, tools: List<ToolSpec>, stream: Boolean): Request {
+    private suspend fun request(system: String, messages: List<Message>, tools: List<ToolSpec>, stream: Boolean): Request {
         val systemText = (listOf(system) + messages.filter { it.role == Role.System }
             .map { m -> m.parts.filterIsInstance<Part.Text>().joinToString("\n") { it.text } })
             .filter { it.isNotBlank() }.joinToString("\n\n")
@@ -97,7 +95,7 @@ class GeminiModel(
         return Request.Builder().url(if (stream) streamEndpoint else endpoint)
             .withHeaders(headers)
             .header("x-goog-api-key", apiKey)
-            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .postInference(InferenceProtocol.Gemini, payload)
             .build()
     }
 
@@ -239,7 +237,8 @@ class GeminiModel(
         fun n(k: String) = (u[k] as? JsonPrimitive)?.intOrNull
         val inT = n("promptTokenCount") ?: return null
         // promptTokenCount 已含缓存命中部分,与统一口径一致
-        return Usage(inT, (n("candidatesTokenCount") ?: 0) + (n("thoughtsTokenCount") ?: 0), n("cachedContentTokenCount") ?: 0)
+        val thoughts = n("thoughtsTokenCount") ?: 0
+        return Usage(inT, (n("candidatesTokenCount") ?: 0) + thoughts, n("cachedContentTokenCount") ?: 0, thoughts)
     }
 }
 
@@ -255,11 +254,16 @@ private class GeminiStream(
     private var usage: Usage? = null
     private var finishReason: String? = null
 
-    fun accept(data: String) {
+    fun accept(data: String): Boolean {
         val root = try { json.parseToJsonElement(data).jsonObject }
         catch (e: Exception) { throw ModelError.BadResponse("流式响应不是合法 JSON", e) }
-        usageOf(root["usageMetadata"])?.let { usage = it }
-        val candidate = (root["candidates"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return
+        var usageInEvent = false
+        usageOf(root["usageMetadata"])?.let { usage = it; usageInEvent = true }
+        val candidate = (root["candidates"] as? JsonArray)?.firstOrNull() as? JsonObject
+        if (candidate == null) {
+            // finishReason 后可能另有一帧只带用量;收到它才算完整的终态,不能提前关流把它丢掉
+            return finishReason != null && usageInEvent
+        }
         (candidate["finishReason"] as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotEmpty)?.let { finishReason = it }
         val reply = parseChunk(data)
         var chunkCalls = 0
@@ -274,6 +278,8 @@ private class GeminiStream(
                 else -> Unit
             }
         }
+        // 当前帧收到用量且已见 finishReason 时可立即收尾;否则继续等可能的 usage-only 帧或 EOF
+        return finishReason != null && usageInEvent
     }
 
     fun finish(): ModelReply {

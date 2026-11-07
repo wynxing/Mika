@@ -30,7 +30,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.wangzan101.mika.ui.components.MikaDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import com.wangzan101.mika.core.chatgpt.SignInFailure
 import com.wangzan101.mika.core.model.ModelRole
 import com.wangzan101.mika.settings.ModelOption
+import com.wangzan101.mika.settings.ModelOptions
 import com.wangzan101.mika.settings.Provider
 import com.wangzan101.mika.settings.ProviderConfig
 import com.wangzan101.mika.settings.ProviderPresets
@@ -67,6 +68,7 @@ import com.wangzan101.mika.ui.components.BarIconButton
 import com.wangzan101.mika.ui.components.ButtonKind
 import com.wangzan101.mika.ui.components.ButtonSize
 import com.wangzan101.mika.ui.components.MikaButton
+import com.wangzan101.mika.ui.components.MikaSwitch
 import com.wangzan101.mika.ui.components.FooterNote
 import com.wangzan101.mika.ui.components.GroupCard
 import com.wangzan101.mika.ui.components.GroupLabel
@@ -94,8 +96,8 @@ import com.wangzan101.mika.voice.SpeechOptions
 
 /** 设置 › 模型:和上手时的配置模型是同一页([ModelSetupScreen]),不在引导流程里。 */
 @Composable
-fun ModelsScreen(store: ProviderStore, onBack: () -> Unit, onOpenSpeech: (() -> Unit)? = null) {
-    ModelSetupScreen(store, onboarding = false, onBack = onBack, onDone = onBack, onOpenSpeech = onOpenSpeech)
+fun ModelsScreen(store: ProviderStore, onBack: () -> Unit, onOpenSpeech: (() -> Unit)? = null, onOpenUsage: (() -> Unit)? = null) {
+    ModelSetupScreen(store, onboarding = false, onBack = onBack, onDone = onBack, onOpenSpeech = onOpenSpeech, onOpenUsage = onOpenUsage)
 }
 
 /** 子页面共用的骨架:顶栏 + 可滚动内容。 */
@@ -189,7 +191,7 @@ internal fun fixedChoices(role: ModelRole): List<RoleChoice> = when (role) {
 
 /**
  * 选用途:看图、轻量顶上是固定选项;下面按服务商分组列出所有已连接服务商的全部模型(用记住的列表),
- * 标签只作参考,不按能力过滤或置灰;服务不提供列表的那家可以手动填模型名。点一下就生效并返回。
+ * 标签只作参考,不按能力过滤或置灰;每家下面都能手动填模型名(列表里没有、或这家不提供列表),手填的标「手填」。点一下就生效并返回。
  */
 @Composable
 fun RolePickerContent(ui: ModelSetupUi, role: ModelRole, actions: RolePickerActions, onBack: () -> Unit) {
@@ -220,27 +222,26 @@ fun RolePickerContent(ui: ModelSetupUi, role: ModelRole, actions: RolePickerActi
         var anyShown = false
         groups.forEach { (p, options) ->
             val shown = options.filter { q.isEmpty() || it.id.contains(q, ignoreCase = true) }
-            val manual = p.models?.isEmpty() == true
+            // 这家列不出模型:手填是唯一的选法
+            val noList = p.models?.isEmpty() == true
             if (q.isNotEmpty() && shown.isEmpty()) return@forEach
             anyShown = true
             val state = ui.listing[p.id]
             GroupLabel(ModelsCopy.providerName(p))
-            if (shown.isNotEmpty() || manual) {
-                GroupCard {
-                    shown.take(PICK_AT_MOST).forEachIndexed { i, o ->
-                        RadioRow(
-                            o.id, selected = ui.picked(role, p.id, o.id), onClick = { actions.pick(p.id, o.id) }, first = i == 0,
-                            titleStyle = ModelIdStyle, below = { Tags(o, forVision = role == ModelRole.Vision) },
-                        )
-                    }
-                    if (manual) ManualModel(p, ui.manualPick[p.id], first = shown.isEmpty()) { actions.pickManual(p.id, it) }
+            GroupCard {
+                shown.take(PICK_AT_MOST).forEachIndexed { i, o ->
+                    RadioRow(
+                        o.id, selected = ui.picked(role, p.id, o.id), onClick = { actions.pick(p.id, o.id) }, first = i == 0,
+                        titleStyle = ModelIdStyle, below = { Tags(o, forVision = role == ModelRole.Vision) },
+                    )
                 }
+                ManualModel(p, ui.manualPick[p.id], first = shown.isEmpty()) { actions.pickManual(p.id, it) }
             }
             val manualState = ui.manualPick[p.id]
             when {
                 manualState is ListState.Failed -> FooterNote(manualState.message, Modifier.testTag("manual-model-failed"), color = c.bad)
                 // 选列表里的模型也可能先试调用(见 ModelSetupUi.probeBeforePick);手填的那一行自己显示进度
-                !manual && manualState == ListState.Running -> FooterNote(ModelSetupCopy.TESTING, Modifier.testTag("pick-probe-running"))
+                !noList && manualState == ListState.Running -> FooterNote(ModelSetupCopy.TESTING, Modifier.testTag("pick-probe-running"))
                 state == ListState.Running -> FooterNote(ModelsCopy.LISTING)
                 state is ListState.Failed -> FooterNote(ModelSetupCopy.failed(state.message), color = c.bad)
                 shown.size > PICK_AT_MOST -> FooterNote(ModelsCopy.more(shown.size - PICK_AT_MOST))
@@ -255,7 +256,7 @@ fun RolePickerContent(ui: ModelSetupUi, role: ModelRole, actions: RolePickerActi
     }
 }
 
-/** 服务不提供模型列表时:照服务商文档填模型名;点「使用」先试调用一次([state] 是进度),通了才选上。 */
+/** 手填模型名(列表里没有、或服务不提供列表):照服务商文档填;点「使用」先试调用一次([state] 是进度),通了才选上并记为手填。 */
 @Composable
 internal fun ManualModel(p: Provider, state: ListState?, first: Boolean, onUse: (String) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
@@ -284,6 +285,8 @@ class ProviderDetailActions(
     val remove: () -> Unit = {},
     /** 把这家的一个模型用作某个用途(「用作」面板里点的)。 */
     val use: (ModelRole, String) -> Unit = { _, _ -> },
+    /** 用户说这家的一个模型能不能看图(「用作」面板里的开关)。 */
+    val setVision: (String, Boolean) -> Unit = { _, _ -> },
     val showAll: () -> Unit = {},
     /** 在用、没核实过的手填模型再试调用一次(见 [ModelSetupUi.unverified])。 */
     val retest: () -> Unit = {},
@@ -345,10 +348,17 @@ fun ProviderDetailContent(ui: ModelSetupUi, p: Provider, actions: ProviderDetail
             }
             FooterNote(ModelsCopy.MODELS_NOTE)
         }
+        // 跳过测试直接存下的:说清它还没测过,别说成「这家不提供模型列表」——那个说法对它不成立
+        val untested = ui.untested(p)
         val unverified = ui.unverified(p)
+        if (untested) {
+            FooterNote(ModelsCopy.UNTESTED_NOTE, Modifier.testTag("provider-untested"), color = c.warn)
+        } else if (unverified.isNotEmpty()) {
+            FooterNote(ModelsCopy.unverifiedNote(unverified), Modifier.testTag("provider-unverified"), color = c.warn)
+        }
+        // 有模型在用时可以就地重测一次;没有的在用的,先刷新列表或去选一个
         if (unverified.isNotEmpty()) {
             val retest = ui.retest[p.id]
-            FooterNote(ModelsCopy.unverifiedNote(unverified), Modifier.testTag("provider-unverified"), color = c.warn)
             MikaButton(
                 if (retest == ListState.Running) ModelSetupCopy.TESTING else ModelsCopy.RETEST, actions.retest,
                 Modifier.fillMaxWidth().padding(bottom = 8.dp).testTag("provider-retest"),
@@ -357,7 +367,8 @@ fun ProviderDetailContent(ui: ModelSetupUi, p: Provider, actions: ProviderDetail
             (retest as? ListState.Failed)?.let { FooterNote(it.message, Modifier.testTag("provider-retest-failed"), color = c.bad) }
         }
         when {
-            p.models?.isEmpty() == true -> FooterNote(ModelsCopy.NO_LIST_NOTE)
+            // 跳过测试存下的那次没列过模型,不能拿它当「这家不提供列表」的证据
+            p.models?.isEmpty() == true && !untested -> FooterNote(ModelsCopy.NO_LIST_NOTE)
             p.models == null && list.isEmpty() && state != ListState.Running -> FooterNote(ModelsCopy.NOT_LISTED)
         }
 
@@ -366,10 +377,10 @@ fun ProviderDetailContent(ui: ModelSetupUi, p: Provider, actions: ProviderDetail
         }
     }
 
-    using?.let { o -> UseAsSheet(ui, p, o.id, onUse = { role -> actions.use(role, o.id) }, onDismiss = { using = null }) }
+    using?.let { o -> UseAsSheet(ui, p, o.id, onUse = { role -> actions.use(role, o.id) }, onVision = { actions.setVision(o.id, it) }, onDismiss = { using = null }) }
     if (changingKey) {
         var key by remember { mutableStateOf("") }
-        AlertDialog(
+        MikaDialog(
             onDismissRequest = { changingKey = false },
             title = { Text(ModelsCopy.CHANGE_KEY) },
             text = {
@@ -394,7 +405,7 @@ fun ProviderDetailContent(ui: ModelSetupUi, p: Provider, actions: ProviderDetail
         )
     }
     if (confirmDelete) {
-        AlertDialog(
+        MikaDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text(ModelsCopy.deleteTitle(ModelsCopy.providerName(p))) },
             text = { Text(ModelsCopy.deleteBody(ui.rolesOf(p))) },
@@ -524,7 +535,7 @@ fun AllModelsContent(ui: ModelSetupUi, p: Provider, actions: ProviderDetailActio
             }
         }
     }
-    using?.let { o -> UseAsSheet(ui, p, o.id, onUse = { role -> actions.use(role, o.id) }, onDismiss = { using = null }) }
+    using?.let { o -> UseAsSheet(ui, p, o.id, onUse = { role -> actions.use(role, o.id) }, onVision = { actions.setVision(o.id, it) }, onDismiss = { using = null }) }
 }
 
 /** 一张卡拆成懒加载的行时,每行的圆角:首行上圆、末行下圆。 */
@@ -553,10 +564,13 @@ private fun ModelRow(o: ModelOption, roles: List<ModelRole>, first: Boolean, onC
     }
 }
 
-/** 点一个模型后从底部升起:「<服务商> · 用作」主模型 / 看图模型 / 轻量模型,点了马上生效。 */
+/**
+ * 点一个模型后从底部升起:「<服务商> · 用作」主模型 / 看图模型 / 轻量模型,点了马上生效;
+ * 下面是「能看图」开关:列表没写的模型由用户说了算,列表写了的也能改。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun UseAsSheet(ui: ModelSetupUi, p: Provider, model: String, onUse: (ModelRole) -> Unit, onDismiss: () -> Unit) {
+private fun UseAsSheet(ui: ModelSetupUi, p: Provider, model: String, onUse: (ModelRole) -> Unit, onVision: (Boolean) -> Unit, onDismiss: () -> Unit) {
     val c = MikaTheme.colors
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = c.surface, shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 8.dp).testTag("use-as")) {
@@ -569,6 +583,13 @@ private fun UseAsSheet(ui: ModelSetupUi, p: Provider, model: String, onUse: (Mod
                     subtitle = if (on) ModelsCopy.IN_USE else ModelsCopy.roleWhat(role),
                     onClick = { onUse(role); onDismiss() },
                 )
+            }
+            ui.options(p).firstOrNull { it.id == model }?.let { o ->
+                val usedForVision = ModelRole.Vision in ui.rolesOf(p.id, model)
+                val sees = ModelOptions.seesImages(o.capabilities.vision, o.visionByUser, usedForVision)
+                ListRow(null, ModelsCopy.SEES_IMAGES, ModelsCopy.seesNote(o, usedForVision)) {
+                    MikaSwitch(sees, onVision, Modifier.testTag("model-sees-images"))
+                }
             }
             ListRow(null, ModelSetupCopy.CANCEL, titleColor = c.ink2, onClick = onDismiss)
         }
@@ -616,8 +637,18 @@ object ModelsCopy {
     val MODELS: String get() = tr(R.string.models_models)
     val MODELS_NOTE: String get() = tr(R.string.models_models_note)
     val NO_LIST_NOTE: String get() = tr(R.string.models_no_list_note)
+    val UNTESTED_NOTE: String get() = tr(R.string.models_untested_note)
     val UNVERIFIED: String get() = tr(R.string.models_unverified)
     val RETEST: String get() = tr(R.string.models_retest)
+    val SEES_IMAGES: String get() = tr(R.string.models_sees_images)
+
+    /** 「能看图」开关下的说明:用户说过的、用作看图的、列表写明的、没写未确认的。 */
+    fun seesNote(o: ModelOption, usedForVision: Boolean): String = tr(when {
+        o.visionByUser != null -> R.string.models_sees_note_user
+        usedForVision -> R.string.models_sees_note_vision
+        o.visionKnown -> R.string.models_sees_note_listed
+        else -> R.string.models_sees_note_unconfirmed
+    })
 
     fun unverifiedNote(models: List<String>) = tr(R.string.models_unverified_note, models.joinToString(tr(R.string.list_sep)))
     val NOT_LISTED: String get() = tr(R.string.models_not_listed)
@@ -781,7 +812,7 @@ object ModelsCopy {
     fun speechLine(ui: ModelSetupUi): RoleLine {
         val s = SpeechOptions.summary(ui.speech, ui.systemSpeech, ui.providers)
         val unset = s.title == UNSET
-        return RoleLine(s.title, s.sub.orEmpty(), isModel = !unset && ui.speech is SpeechChoice.Provider, unset = unset, subtitleOk = s.subOk)
+        return RoleLine(s.title, s.sub.orEmpty(), isModel = !unset && (ui.speech is SpeechChoice.Provider || ui.speech is SpeechChoice.Doubao), unset = unset, subtitleOk = s.subOk)
     }
 
     fun roleIcon(role: ModelRole): ImageVector = when (role) {

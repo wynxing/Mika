@@ -2,12 +2,10 @@ package com.wangzan101.mika.ui
 
 import org.junit.Rule
 import com.wangzan101.mika.i18n.ChineseTexts
+import com.wangzan101.mika.chat.BranchOrigin
 import com.wangzan101.mika.chat.ConversationSummary
-import com.wangzan101.mika.core.shell.BuiltinShellStatus
-import com.wangzan101.mika.settings.AccessibilityState
-import com.wangzan101.mika.settings.Prerequisites
-import com.wangzan101.mika.settings.SystemStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -17,20 +15,22 @@ import java.time.ZoneId
 class ChatCopyTest {
     @get:Rule val texts = ChineseTexts()
 
-    @Test fun greetingFollowsTheTimeOfDay() {
-        assertEquals("早上好", ChatCopy.greeting(7))
-        assertEquals("中午好", ChatCopy.greeting(12))
-        assertEquals("下午好", ChatCopy.greeting(15))
-        assertEquals("晚上好", ChatCopy.greeting(20))
-        assertEquals("夜深了", ChatCopy.greeting(2))
-        assertEquals("夜深了", ChatCopy.greeting(23))
-    }
-
     @Test fun sixDistinctNonBlankExamples() {
         assertEquals(6, ChatCopy.examples.size)
         assertEquals(6, ChatCopy.examples.map { it.text }.filter { it.isNotBlank() }.toSet().size)
-        assertEquals("打开微信，给王赞发消息，让他拉我进Mika内测体验群", ChatCopy.examples.first().text)
-        assertEquals("帮我订明天早上9:40、9:50、10:00 的闹钟", ChatCopy.examples[4].text)
+    }
+
+    /** 分支标题:源标题后面加后缀,总长不超过 24 字;截的是源标题,后缀留着,emoji 不截半个。 */
+    @Test fun branchTitleKeepsTheSuffixWhenTruncating() {
+        val suffix = " · 分支"
+        val long = "一二三四五六七八九十一二三四五六七八九十一二三四五"
+        val title = ChatCopy.branchTitle(long, suffix)
+        assertTrue(title.endsWith(suffix))
+        assertEquals(24, title.length)
+        assertEquals("短标题$suffix", ChatCopy.branchTitle("短标题", suffix))
+        val emoji = ChatCopy.branchTitle("😀".repeat(21), suffix)
+        assertTrue(emoji.endsWith(suffix))
+        assertFalse(emoji.dropLast(suffix.length).lastOrNull()?.isHighSurrogate() ?: false)
     }
 
     @Test fun titleIsTheFirstLineOfTheFirstMessage() {
@@ -46,60 +46,9 @@ class ChatCopyTest {
         assertEquals("挑一个", ChatCopy.plainTitle(paged))
     }
 
-    @Test fun subtitleSaysWhatIsGoingOn() {
-        val working = Exchange("x", emptyList(), ExchangeStatus.Working, live = true)
-        assertEquals("正在处理" to ChatCopy.Tone.Accent, ChatCopy.subtitle(working, null))
-        assertEquals("正在操作设置" to ChatCopy.Tone.Accent, ChatCopy.subtitle(working, "设置"))
-        assertEquals("等你处理" to ChatCopy.Tone.Warn, ChatCopy.subtitle(working.copy(status = ExchangeStatus.NeedsInput("?", null)), null))
-        assertEquals("等你处理" to ChatCopy.Tone.Warn, ChatCopy.subtitle(working.copy(status = ExchangeStatus.Paused("why")), null))
-        assertEquals("等你解锁手机" to ChatCopy.Tone.Warn, ChatCopy.subtitle(working.copy(status = ExchangeStatus.WaitingUnlock), null))
-        assertNull(ChatCopy.subtitle(working.copy(status = ExchangeStatus.Done("好", null)), "设置"))
-        assertNull(ChatCopy.subtitle(null, null))
-    }
-
-    @Test fun progressLineSaysPausedWhileWaitingForYou() {
-        val ex = Exchange("x", emptyList(), ExchangeStatus.Working, live = true, line = "按评分排序")
-        assertEquals("按评分排序", ChatCopy.progressLine(ex))
-        assertEquals("已暂停", ChatCopy.progressLine(ex.copy(status = ExchangeStatus.NeedsTakeover("login", "登录"))))
-        assertEquals("已暂停", ChatCopy.progressLine(ex.copy(status = ExchangeStatus.NeedsConfirmation("t", "b", 1))))
-        assertEquals("已暂停", ChatCopy.progressLine(ex.copy(status = ExchangeStatus.WaitingUnlock)))
-        assertEquals("正在处理", ChatCopy.progressLine(ex.copy(line = "", waitingForModel = true)))
-    }
-
-    @Test fun clockLabel() {
-        assertEquals("0:00", ChatCopy.clock(0))
-        assertEquals("0:24", ChatCopy.clock(24_900))
-        assertEquals("12:05", ChatCopy.clock(725_000))
-        assertEquals("1:02:03", ChatCopy.clock(3_723_000))
-        assertEquals("0:00", ChatCopy.clock(-5))
-    }
-
-    @Test fun placeholderFollowsTheComposer() {
-        assertEquals(ChatCopy.EMPTY_PROMPT, ChatCopy.placeholder(ComposerMode.Idle, hasHistory = false))
-        assertEquals("继续说点什么…", ChatCopy.placeholder(ComposerMode.Idle, hasHistory = true))
-        assertEquals("回答 Mika 的问题", ChatCopy.placeholder(ComposerMode.Answer, hasHistory = true))
-        assertEquals("补充或改要求…", ChatCopy.placeholder(ComposerMode.Busy, hasHistory = true))
-    }
-
-    @Test fun voicePlaceholderSaysHoldToTalk() {
-        assertEquals("按住说话，点一下打字", ChatCopy.voicePlaceholder(ComposerMode.Idle))
-        assertEquals("按住说话插话，点一下打字", ChatCopy.voicePlaceholder(ComposerMode.Busy))
-        assertEquals("按住说话回答，点一下打字", ChatCopy.voicePlaceholder(ComposerMode.Answer))
-    }
-
     private val zone = ZoneId.of("Asia/Shanghai")
     private fun at(y: Int, mo: Int, d: Int, h: Int = 12, mi: Int = 0) =
         LocalDateTime.of(y, mo, d, h, mi).atZone(zone).toInstant().toEpochMilli()
-
-    @Test fun conversationTimeIsRelative() {
-        // 2026-10-27 是星期二
-        val now = at(2026, 10, 27, 15)
-        assertEquals("9:05", conversationTime(at(2026, 10, 27, 9, 5), now, zone))
-        assertEquals("昨天", conversationTime(at(2026, 10, 26, 23), now, zone))
-        assertEquals("周五", conversationTime(at(2026, 10, 23), now, zone))
-        assertEquals("10 月 1 日", conversationTime(at(2026, 10, 1), now, zone))
-        assertEquals("2025 年 12 月 31 日", conversationTime(at(2025, 12, 31), now, zone))
-    }
 
     @Test fun drawerListsRunningThenRecent() {
         val now = at(2026, 10, 27, 15)
@@ -118,10 +67,7 @@ class ChatCopyTest {
         assertEquals("正在操作外卖", s.running.first().subtitle)
         assertTrue(s.running.first().current)
         assertEquals(listOf("b"), s.recent.map { it.id })
-        assertEquals("昨天", s.recent.single().time)
         assertEquals("", s.recent.single().subtitle)
-        // 当前对话在列表里时,时间也写在标题右边
-        assertEquals("14:00", s.running.first().time)
     }
 
     /** 置顶的对话在「置顶」一段,最近置顶的在前,不在「最近」里重复;有任务在跑的只列在进行中(带图钉)。 */
@@ -155,6 +101,14 @@ class ChatCopyTest {
         assertEquals("shop.example.com", s.running.single().site)
     }
 
+    /** 分支出来的对话在侧栏带分支标记;普通对话不带。 */
+    @Test fun drawerMarksBranchedConversations() {
+        val origin = BranchOrigin("parent", 1, afterTurn = true, at = 5L)
+        val all = listOf(ConversationSummary("a", "一", 0L, branchOf = origin), ConversationSummary("b", "二", 0L))
+        val s = drawerSections(all, CurrentConversation("x", false, "", ""), emptyList(), { null }, canSwitch = true, now = 0L, zone = zone)
+        assertEquals(listOf(true, false), s.recent.map { it.branch })
+    }
+
     /** 任务进行中、没开并行:只有当前对话能点。 */
     @Test fun drawerLocksOtherConversationsWhileBusy() {
         val all = listOf(ConversationSummary("a", "一", 0L), ConversationSummary("b", "二", 0L))
@@ -167,13 +121,55 @@ class ChatCopyTest {
         assertTrue(fresh.running.single().enabled)
     }
 
-    @Test fun readinessLine() {
-        val ready = SystemStatus(34, BuiltinShellStatus.Running, AccessibilityState.On, notificationsAllowed = true)
-        assertEquals("一切就绪" to true, readiness(Prerequisites.check(ready, hasMainModel = true)))
-        assertEquals("还不能开始任务" to false, readiness(Prerequisites.check(ready, hasMainModel = false)))
-        assertEquals(
-            "手机操作还没准备好" to false,
-            readiness(Prerequisites.check(ready.copy(accessibility = AccessibilityState.Off), hasMainModel = true)),
-        )
+    @Test fun greetingFollowsTheTimeOfDay() {
+        assertEquals("早上好", ChatCopy.greeting(7))
+        assertEquals("中午好", ChatCopy.greeting(12))
+        assertEquals("下午好", ChatCopy.greeting(15))
+        assertEquals("晚上好", ChatCopy.greeting(20))
+        assertEquals("夜深了", ChatCopy.greeting(2))
+        assertEquals("夜深了", ChatCopy.greeting(23))
+    }
+
+    @Test fun clockLabel() {
+        assertEquals("0:00", ChatCopy.clock(0))
+        assertEquals("0:24", ChatCopy.clock(24_900))
+        assertEquals("12:05", ChatCopy.clock(725_000))
+        assertEquals("1:02:03", ChatCopy.clock(3_723_000))
+        assertEquals("0:00", ChatCopy.clock(-5))
+    }
+
+    @Test fun subtitleSaysWhatIsGoingOn() {
+        val working = Exchange("x", emptyList(), ExchangeStatus.Working, live = true)
+        assertEquals("正在处理" to ChatCopy.Tone.Accent, ChatCopy.subtitle(working, null))
+        assertEquals("正在操作设置" to ChatCopy.Tone.Accent, ChatCopy.subtitle(working, "设置"))
+        assertEquals("等你处理" to ChatCopy.Tone.Warn, ChatCopy.subtitle(working.copy(status = ExchangeStatus.NeedsInput("?", null)), null))
+        assertEquals("等你处理" to ChatCopy.Tone.Warn, ChatCopy.subtitle(working.copy(status = ExchangeStatus.Paused("why")), null))
+        assertEquals("等你解锁手机" to ChatCopy.Tone.Warn, ChatCopy.subtitle(working.copy(status = ExchangeStatus.WaitingUnlock), null))
+        assertNull(ChatCopy.subtitle(working.copy(status = ExchangeStatus.Done("好", null)), "设置"))
+        assertNull(ChatCopy.subtitle(null, null))
+    }
+
+    @Test fun progressLineSaysPausedWhileWaitingForYou() {
+        val ex = Exchange("x", emptyList(), ExchangeStatus.Working, live = true, line = "按评分排序")
+        assertEquals("按评分排序", ChatCopy.progressLine(ex))
+        assertEquals("已暂停", ChatCopy.progressLine(ex.copy(status = ExchangeStatus.NeedsTakeover("login", "登录"))))
+        assertEquals("已暂停", ChatCopy.progressLine(ex.copy(status = ExchangeStatus.NeedsConfirmation("t", "b", 1))))
+        assertEquals("已暂停", ChatCopy.progressLine(ex.copy(status = ExchangeStatus.WaitingUnlock)))
+        assertEquals("正在处理", ChatCopy.progressLine(ex.copy(line = "", waitingForModel = true)))
+    }
+
+    @Test fun placeholderFollowsTheComposer() {
+        assertEquals(ChatCopy.EMPTY_PROMPT, ChatCopy.placeholder(ComposerMode.Idle, hasHistory = false))
+        assertEquals("继续说点什么…", ChatCopy.placeholder(ComposerMode.Idle, hasHistory = true))
+        assertEquals("回答 Mika 的问题", ChatCopy.placeholder(ComposerMode.Answer, hasHistory = true))
+        assertEquals("补充或改要求…", ChatCopy.placeholder(ComposerMode.Busy, hasHistory = true))
+        assertEquals("写下下一件事…", ChatCopy.placeholder(ComposerMode.Busy, hasHistory = true, followUp = FollowUpMode.Queue))
+    }
+
+    @Test fun followUpHintExplainsWhenItTakesEffect() {
+        assertEquals("下一步就按这句话调整", followUpHint(FollowUpMode.Steer, ExchangeStatus.Working))
+        assertEquals("任务暂停中，继续后生效", followUpHint(FollowUpMode.Steer, ExchangeStatus.Paused("等解锁")))
+        assertEquals("任务暂停中，继续后生效", followUpHint(FollowUpMode.Steer, ExchangeStatus.NeedsTakeover("login", "登录")))
+        assertEquals("当前任务结束后自动开始", followUpHint(FollowUpMode.Queue, ExchangeStatus.Working))
     }
 }

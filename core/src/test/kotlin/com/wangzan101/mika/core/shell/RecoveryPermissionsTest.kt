@@ -20,8 +20,8 @@ class RecoveryPermissionsTest {
         override fun save(consent: RecoveryConsent) { this.consent.value = consent }
     }
 
-    /** 假的执行器:记下跑过的命令(去掉退出码包装),[a11y] 是系统里的无障碍列表。 */
-    private class FakeShell(var a11y: String? = null, val failOn: String? = null) : ShellCommandRunner {
+    /** 假的执行器:记下跑过的命令(去掉退出码包装),[a11y] 是系统里的无障碍列表;[failAt] 是让第几条命令(从 1 数)失败。 */
+    private class FakeShell(var a11y: String? = null, val failOn: String? = null, val failAt: Int? = null) : ShellCommandRunner {
         private val PUT_LIST = "settings put secure enabled_accessibility_services "
         private val DELETE_LIST = "settings delete secure enabled_accessibility_services"
         val ran = mutableListOf<String>()
@@ -29,7 +29,7 @@ class RecoveryPermissionsTest {
             if (command == PermissionCommands.READ_ACCESSIBILITY) return (a11y ?: "null") + "\n"
             val bare = command.substringBefore(" 2>&1;")
             ran += bare
-            val code = if (failOn != null && bare.contains(failOn)) 255 else 0
+            val code = if (failOn != null && bare.contains(failOn) || ran.size == failAt) 255 else 0
             // 写成功的列表照实留下,之后再读就是新的
             if (code == 0 && bare.startsWith(PUT_LIST)) a11y = bare.removePrefix(PUT_LIST).trim('\'')
             if (code == 0 && bare == DELETE_LIST) a11y = null
@@ -228,6 +228,22 @@ class RecoveryPermissionsTest {
     }
 
     @Test
+    fun explicitExitDefersAutomaticPermissionsUntilManualLaunch() = runTest {
+        val shell = FakeShell()
+        val status = MutableStateFlow(BuiltinShellStatus.Running)
+        val active = MutableStateFlow(false)
+        val store = Store(RecoveryConsent(declined = setOf(a11y, restore, autoOn)))
+        val p = RecoveryPermissions({ shell }, store, pkg)
+        val job = launch { p.applyWhenRunning(status, active) }
+        runCurrent()
+        assertTrue(shell.ran.isEmpty())
+        active.value = true
+        runCurrent()
+        assertEquals(listOf(PermissionCommands.whitelistAdd(pkg)), shell.ran)
+        job.cancel()
+    }
+
+    @Test
     fun unpairRevokesEverythingThatWasApplied() = runTest {
         val shell = FakeShell(a11y = "$mika:$other")
         val store = Store(RecoveryConsent(applied = all))
@@ -358,5 +374,18 @@ class RecoveryPermissionsTest {
         val shell = FakeShell(a11y = "$other:$mika", failOn = "enabled_accessibility_services")
         assertTrue(RecoveryPermissions({ shell }, Store(), pkg).restartAccessibility(0) is PermissionResult.Failed)
         assertEquals(1, shell.ran.size)
+    }
+
+    @Test
+    fun restartAccessibilityRestoresTheListWhenAddingBackFails() = runTest {
+        // 去掉成功(第 1、2 条),加回时第 3 条失败:把原来的列表连同总开关写回,结果仍报失败
+        val shell = FakeShell(a11y = "$other:$mika", failAt = 3)
+        assertTrue(RecoveryPermissions({ shell }, Store(), pkg).restartAccessibility(0) is PermissionResult.Failed)
+        assertEquals(
+            PermissionCommands.writeAccessibility(other) + PermissionCommands.writeAccessibility("$other:$mika").first() +
+                PermissionCommands.writeAccessibility("$other:$mika"),
+            shell.ran,
+        )
+        assertEquals("$other:$mika", shell.a11y)
     }
 }

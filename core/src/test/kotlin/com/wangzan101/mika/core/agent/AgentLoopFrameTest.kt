@@ -7,8 +7,6 @@ import com.wangzan101.mika.core.model.Role
 import com.wangzan101.mika.core.model.StopReason
 import com.wangzan101.mika.core.tool.FakeScreen
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -22,7 +20,7 @@ class AgentLoopFrameTest {
     private fun finish() = com.wangzan101.mika.core.testing.answerReply("done")
     private fun images(msgs: List<Message>) = msgs.flatMap { it.parts }.filterIsInstance<Part.Image>()
 
-    @Test fun actionResultFollowedByFrameAndOnlyLatestImageSent() = runTest {
+    @Test fun actionResultFollowedByFrameAndSentFramesAreKeptInOrder() = runTest {
         val tap = call("phone_tap", """{"x":500,"y":500}""")
         val m = FakeModel(tools(call("phone_observe")), tools(tap), *(1..5).map { tools(call("phone_tap", """{"x":${it * 100},"y":300}""")) }.toTypedArray(), finish())
         AgentLoop(m, toolDispatcher(FakeScreen(), visionEnabled = true), "BASE").run("t")

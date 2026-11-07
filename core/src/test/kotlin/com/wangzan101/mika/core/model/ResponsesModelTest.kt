@@ -100,6 +100,11 @@ class ResponsesModelTest {
         assertEquals(Usage(12, 4, 8), reply.usage)
     }
 
+    @Test fun readsReasoningTokensDetails() = runTest {
+        server.enqueue(stream(completed("""{"input_tokens":12,"output_tokens":40,"output_tokens_details":{"reasoning_tokens":32}}""")))
+        assertEquals(Usage(12, 40, 0, reasoningTokens = 32), model().complete("s", user, listOf(tool)).usage)
+    }
+
     @Test fun replaysReasoningBeforeTheCallAndSendsToolResultsAsOutputs() = runTest {
         server.enqueue(stream(completed()))
         val reasoning = """[{"type":"reasoning","summary":[],"encrypted_content":"ENC"}]"""
@@ -160,6 +165,23 @@ class ResponsesModelTest {
         assertFalse(RetryPolicy.transient(e))
         server.enqueue(MockResponse().setResponseCode(403).setBody("{}"))
         expect<ModelError.Auth> { model().complete("s", user, emptyList()) }
+    }
+
+    /** 找不到模型时带上服务端的原话:按错误代码认出的、只看状态码 404 的都带。 */
+    @Test fun modelNotFoundCarriesTheServerMessage() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":{"code":"model_not_found","message":"The model `x` does not exist\n"}}"""))
+        assertEquals("The model `x` does not exist", expect<ModelError.ModelNotFound> { model().complete("s", user, emptyList()) }.detail)
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":{"message":"none of group/rpa's models is ready"}}"""))
+        assertEquals("none of group/rpa's models is ready", expect<ModelError.ModelNotFound> { model().complete("s", user, emptyList()) }.detail)
+    }
+
+    /** 超出上下文的 400 和 OpenAI 兼容接口同一条规则:本机跑的服务也开这个接口,原话说的是上下文的大小。 */
+    @Test fun contextTooLongIsRecognizedLikeTheCompatibleApi() = runTest {
+        server.enqueue(MockResponse().setResponseCode(400).setBody("""{"error":{"code":400,"message":"request (25123 tokens) exceeds the available context size (16384 tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":25123,"n_ctx":16384}}"""))
+        expect<ModelError.ContextTooLong> { model().complete("s", user, emptyList()) }
+        server.enqueue(MockResponse().setResponseCode(400).setBody("""{"error":{"message":"This model's maximum context length is 16384 tokens."}}"""))
+        expect<ModelError.ContextTooLong> { model().complete("s", user, emptyList()) }
+        assertEquals(2, server.requestCount)
     }
 
     @Test fun planHttpErrorsAreNotRetryable() = runTest {

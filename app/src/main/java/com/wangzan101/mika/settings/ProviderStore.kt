@@ -1,6 +1,7 @@
 package com.wangzan101.mika.settings
 
 import android.content.Context
+import com.wangzan101.mika.core.agent.ContextLimits
 import com.wangzan101.mika.core.chatgpt.ChatGptAuth
 import com.wangzan101.mika.core.chatgpt.ChatGptSession
 import com.wangzan101.mika.core.chatgpt.ChatGptTokens
@@ -42,6 +43,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.boolean
@@ -55,6 +57,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import com.wangzan101.mika.core.net.NetProxy
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.Base64
@@ -84,6 +87,19 @@ data class ProviderConfig(
     enum class Kind {
         OpenAiCompat, Anthropic, Gemini, OpenAiResponses, ChatGpt, Xai;
 
+        /**
+         * 这个接口类型发请求走哪种协议。用它筛掉接口写明了不支持的模型,见 [com.wangzan101.mika.ui.ModelSetupViewModel]
+         * 的试调用。账号登录的两家(ChatGpt、Xai)都走 Responses;这两家不走那张表单的试调用(登录时已经核对过),
+         * 所以这里只求写对,不影响筛谁。
+         */
+        val protocol: ModelProtocol
+            get() = when (this) {
+                OpenAiCompat -> ModelProtocol.ChatCompletions
+                Anthropic -> ModelProtocol.Messages
+                Gemini -> ModelProtocol.GenerateContent
+                OpenAiResponses, ChatGpt, Xai -> ModelProtocol.Responses
+            }
+
         companion object {
             /** 模型单独指定的协议用哪种接口类型的适配器。 */
             fun of(protocol: ModelProtocol): Kind = when (protocol) {
@@ -106,6 +122,10 @@ data class ProviderConfig(
  * [sessionHeader] 是它要求放对话会话号的请求头名(来自预设,见 [ProviderPreset.sessionHeader]);不要的为 null。
  * [verifiedModels] 是在这家试调用(见 [ProviderStore.probe])得到过回复的模型名:不提供列表的服务商,模型名是手填的,
  * 没在这里的就没核实过(旧版本存下的都没有,那时不提供列表的服务商不试调用)。
+ * [typedModels] 是用户手填、试调用通过后加进来的模型名(列表里没有、或这家列不出模型):刷新列表不丢,选模型时标「手填」。
+ * [savedUntested] 是用户跳过测试直接存下的一家(见 [ProviderStore.connect]):既没列过模型、也没试调用过,
+ * 所以 [models] 是空列表、[verifiedModels] 是空的,但那些「这家不提供列表」的说法对它不成立。
+ * 之后成功列过一次模型或试通过一次就清掉(见 [ProviderStore.rememberModels]、[ProviderStore.markVerified])。
  */
 data class Provider(
     val id: String,
@@ -115,13 +135,38 @@ data class Provider(
     val models: List<ListedModel>? = null,
     val sessionHeader: String? = null,
     val verifiedModels: Set<String> = emptySet(),
+    val typedModels: Set<String> = emptySet(),
     /**
      * Key 是怎么来的:用账号授权换来的(目前只有 [ProviderStore.OPENROUTER_SIGN_IN])为那一家的标记,用户自己填的为 null。
      * 标了的服务商详情里是账号登录的样子(退出登录、到对方页面删 Key),不是「更换 Key」。
      */
     val signIn: String? = null,
+    val savedUntested: Boolean = false,
+    /** 按模型名保留，用途切换后也能找回。 */
+    val contextSettings: Map<String, ModelContextSettings> = emptyMap(),
+    /** 用户说的某个模型能不能看图(按模型名):比列表和预设初值都算数,见 [ModelOptions.seesImages]。 */
+    val visionOverrides: Map<String, Boolean> = emptyMap(),
 ) {
     val key: String get() = ProviderConnection.keyOf(kind, baseUrl, name)
+
+    /**
+     * [model] 在这家还没测试通过:这家没有可用的列表(不提供,或跳过测试存下时没列过),模型名是手填的,又没在
+     * [verifiedModels] 里。账号登录的那几家模型名是固定的,不算。服务商页对这样在用的模型给「重新测试」。
+     */
+    fun untested(model: String): Boolean =
+        kind != ProviderConfig.Kind.ChatGpt && kind != ProviderConfig.Kind.Xai && models?.isEmpty() == true && model !in verifiedModels
+}
+
+/** OkHttp 把超时换算为 Int 毫秒，秒数必须在换算后仍能存下。 */
+internal val MODEL_READ_TIMEOUT_SECONDS = 1..(Int.MAX_VALUE / 1_000)
+
+/** 留空的窗口沿用所选模型配置，留空的触发点交给核心自动计算，留空的读超时用全局默认(120 秒)。 */
+data class ModelContextSettings(val windowTokens: Int? = null, val triggerTokens: Int? = null, val readTimeoutSeconds: Int? = null) {
+    fun limits(modelWindow: Int): ContextLimits = ContextLimits.of(windowTokens ?: modelWindow, triggerTokens)
+
+    fun validFor(modelWindow: Int): Boolean = (windowTokens == null || windowTokens > 0) &&
+        (triggerTokens == null || (triggerTokens > 0 && triggerTokens == limits(modelWindow).trigger)) &&
+        (readTimeoutSeconds == null || readTimeoutSeconds in MODEL_READ_TIMEOUT_SECONDS)
 }
 
 /** 一个用途选了什么:一个具体模型、用主模型,或不用(只有看图可以不用)。 */
@@ -157,6 +202,12 @@ data class RoleChoices(
         RoleChoice.Off, null -> null
     }
 
+    /** 两个用途是否解析到同一条配置;任一用途没配时不算相同。 */
+    fun sameModel(first: ModelRole, second: ModelRole): Boolean {
+        val a = resolve(first) ?: return false
+        return a == resolve(second)
+    }
+
     /** 有用途在用的配置 id;其余的配置没人用,会被删掉。 */
     val referenced: Set<String> get() = ModelRole.entries.mapNotNull(::resolve).toSet()
 
@@ -190,13 +241,15 @@ data class RoleChoices(
 /**
  * 建一个模型客户端时额外给的:[headers] 每个请求都带(客户端标识、会话号,见 [ClientHeaders]);
  * [maxOutputTokens] 限制回复长度(连接测试用),null 按适配器默认;[reasoningEffort] 是这个用途选的思考强度;
- * [thinkingTypes] 是模型列表写明这个模型接受的思考方式(见 [ListedModel.thinkingTypes]),没说为 null。
+ * [thinkingTypes] 是模型列表写明这个模型接受的思考方式(见 [ListedModel.thinkingTypes]),没说为 null;
+ * [readTimeoutSeconds] 是这条配置单独的读超时,慢速本地推理(#295)可调大,null 用全局默认(120 秒)。
  */
 data class ClientSetup(
     val headers: Map<String, String> = emptyMap(),
     val maxOutputTokens: Int? = null,
     val reasoningEffort: String? = null,
     val thinkingTypes: List<String>? = null,
+    val readTimeoutSeconds: Int? = null,
 )
 
 /** 「测试并保存」试调用(见 [ProviderStore.probe])的结果。 */
@@ -310,9 +363,12 @@ class ProviderStore(
     /**
      * 「测试并保存」连上了一个服务商:存下它(名字、接口类型、地址、Key)和列出的模型。
      * 接口类型、地址和名字都相同的服务商已经有了,就更新那一个(换 Key、换列表),不重复添加。
-     * [apiKey] 为 null 时不改已存的 Key。[verified] 是这次试调用得到回复的模型名,记进 [Provider.verifiedModels]。
+     * [apiKey] 为 null 时不改已存的 Key。[verified] 是这次试调用得到回复的模型名,记进 [Provider.verifiedModels];
+     * [typed] 是其中用户手填的,记进 [Provider.typedModels]。
      * [signIn] 是 Key 的来历(见 [Provider.signIn]):用户自己填 Key 的为 null,授权来的为那一家的标记。
      * 两种来历各是各的服务商(地址、名字一样也不合并):授权不会顶掉用户自己填的 Key,退出登录也只删授权来的那把。
+     * [untested] 为真是用户跳过测试直接存下的(见 [Provider.savedUntested]):一个模型都没列、也没试调用。
+     * 已经有这一家、而且它列过模型或核实过时,不会因为这个参数被重新标成没测过。
      */
     @Synchronized
     fun connect(
@@ -320,29 +376,57 @@ class ProviderStore(
         sessionHeader: String? = ProviderPresets.forBaseUrl(baseUrl)?.sessionHeader,
         verified: Set<String> = emptySet(),
         signIn: String? = null,
+        typed: Set<String> = emptySet(),
+        untested: Boolean = false,
     ): Provider {
         val found = findOrAddProvider(name, kind, baseUrl, signIn)
-        val p = found.copy(models = models, sessionHeader = sessionHeader, verifiedModels = found.verifiedModels + verified)
+        // 跳过测试时没有列表可存:这家之前列过的留着,不要用空表把已有的列表盖掉
+        val listed = if (untested && models.isEmpty()) found.models ?: models else models
+        val p = found.copy(
+            models = listed, sessionHeader = sessionHeader,
+            verifiedModels = found.verifiedModels + verified, typedModels = found.typedModels + typed,
+            // 这次没测、这家也没有核实过的模型、也没列过列表,才是「没测过」;别的情况一律按测过
+            savedUntested = untested && verified.isEmpty() && found.verifiedModels.isEmpty() && listed.isEmpty(),
+        )
         _providers.value = _providers.value.map { if (it.id == p.id) p else it }
+        repairUnavailableReasoningEfforts()
         if (apiKey != null) setKey(p.id, apiKey)
         writeConfig()
         return p
     }
 
-    /** 记下服务商最近一次列出的模型。 */
+    /** 记下服务商最近一次列出的模型。列出来了,就说明「没测过」不再成立(跳过测试存下的那家在这里清掉标记)。 */
     @Synchronized
     fun rememberModels(providerId: String, models: List<ListedModel>) {
         if (provider(providerId) == null) return
-        _providers.value = _providers.value.map { if (it.id == providerId) it.copy(models = models) else it }
+        _providers.value = _providers.value.map {
+            if (it.id == providerId) it.copy(models = models, savedUntested = false) else it
+        }
+        repairUnavailableReasoningEfforts()
         writeConfig()
     }
 
-    /** 记下 [model] 在这家试调用得到了回复(见 [Provider.verifiedModels])。 */
+    /**
+     * 记下 [model] 在这家试调用得到了回复(见 [Provider.verifiedModels])。
+     * 试通过了就说明「没测过」不再成立,跳过测试存下的那家在这里清掉标记——这个模型本来就在
+     * [Provider.verifiedModels] 里时也要清,不能直接返回。
+     */
     @Synchronized
     fun markVerified(providerId: String, model: String) {
         val p = provider(providerId) ?: return
-        if (model in p.verifiedModels) return
-        _providers.value = _providers.value.map { if (it.id == providerId) it.copy(verifiedModels = it.verifiedModels + model) else it }
+        if (model in p.verifiedModels && !p.savedUntested) return
+        _providers.value = _providers.value.map {
+            if (it.id == providerId) it.copy(verifiedModels = it.verifiedModels + model, savedUntested = false) else it
+        }
+        writeConfig()
+    }
+
+    /** 记下用户在这家手填的 [model](见 [Provider.typedModels])。 */
+    @Synchronized
+    fun markTyped(providerId: String, model: String) {
+        val p = provider(providerId) ?: return
+        if (model in p.typedModels) return
+        _providers.value = _providers.value.map { if (it.id == providerId) it.copy(typedModels = it.typedModels + model) else it }
         writeConfig()
     }
 
@@ -383,8 +467,8 @@ class ProviderStore(
     }
 
     /**
-     * 定一个用途:用户选什么就是什么,不看能力标记。选具体模型时,主模型把工具调用、看图模型把看图标记记为 true
-     * (运行时按这两个标记决定发不发工具定义、附不附图)。之后没人用的配置删掉。
+     * 定一个用途:用户选什么就是什么,不看能力标记。选具体模型当主模型时把工具调用标记记为 true(运行时据此发工具定义);
+     * 看图标记不改存着的,在 [configFor] 里按当下的选择推出来,换走了就跟着回去。之后没人用的配置删掉。
      * 配置不存在、或这个用途不接受这种选择(见 [RoleChoices.with])时返回 false。
      */
     @Synchronized
@@ -394,11 +478,8 @@ class ProviderStore(
         if (choice is RoleChoice.Model) {
             _configs.value = _configs.value.map { c ->
                 if (c.id != choice.configId) c
-                else when (role) {
-                    ModelRole.Main -> c.copy(capabilities = c.capabilities.copy(toolCalls = true))
-                    ModelRole.Vision -> c.copy(capabilities = c.capabilities.copy(vision = true))
-                    ModelRole.Light -> c
-                }
+                else if (role == ModelRole.Main) c.copy(capabilities = c.capabilities.copy(toolCalls = true))
+                else c
             }
         }
         _roles.value = next
@@ -421,6 +502,32 @@ class ProviderStore(
         return true
     }
 
+    @Synchronized
+    fun setModelContext(configId: String, settings: ModelContextSettings): Boolean {
+        val cfg = _configs.value.firstOrNull { it.id == configId } ?: return false
+        val p = provider(cfg.providerId) ?: return false
+        if (!settings.validFor(cfg.capabilities.contextTokens)) return false
+        val saved = if (settings == ModelContextSettings()) p.contextSettings - cfg.model
+            else p.contextSettings + (cfg.model to settings)
+        val updated = _providers.value.map { if (it.id == p.id) p.copy(contextSettings = saved) else it }
+        try {
+            writeAtomically(configFile, configJson(updated))
+        } catch (_: Exception) {
+            return false
+        }
+        _providers.value = updated
+        return true
+    }
+
+    /** 记下用户说的 [model] 能不能看图(见 [Provider.visionOverrides]);服务商不存在时返回 false。 */
+    @Synchronized
+    fun setModelVision(providerId: String, model: String, sees: Boolean): Boolean {
+        val p = provider(providerId) ?: return false
+        _providers.value = _providers.value.map { if (it.id == p.id) p.copy(visionOverrides = p.visionOverrides + (model to sees)) else it }
+        writeConfig()
+        return true
+    }
+
     /** 看图模型的「看图定位已验证」(开发者选项里改);看图用主模型时改的是主模型那条配置。没有看图模型时不动。 */
     @Synchronized
     fun setVisionGroundingVerified(verified: Boolean) {
@@ -432,14 +539,22 @@ class ProviderStore(
     }
 
     /**
-     * 这个用途实际用的配置;没选、不用时为 null。看图「用主模型」时是主模型那条配置、看图标记为 true:
-     * 用户说了主模型能看图,截图就照发。这只影响看图这一路,主模型自己办事时仍按它存着的标记。
+     * 这个用途实际用的配置;没选、不用时为 null。看图标记按当下推出来,不看存着的列表数据有没有写:
+     * 看图这一路总是 true(用户选了它来看图);别的用途按 [ModelOptions.seesImages]——用户在这个模型上说过的为准,
+     * 没说过而看图也用这条配置(选了同一个模型,或「用主模型」)的,同样算能看,截图直接附给它,不必另调一次看图。
      */
     fun configFor(role: ModelRole): ProviderConfig? {
         val choices = _roles.value
         val cfg = choices.resolve(role)?.let { id -> _configs.value.firstOrNull { it.id == id } } ?: return null
-        val viaMain = role == ModelRole.Vision && choices.vision == RoleChoice.SameAsMain
-        return if (viaMain) cfg.copy(capabilities = cfg.capabilities.copy(vision = true)) else cfg
+        val sees = role == ModelRole.Vision || ModelOptions.seesImages(cfg.capabilities.vision,
+            provider(cfg.providerId)?.visionOverrides?.get(cfg.model), usedForVision = choices.resolve(ModelRole.Vision) == cfg.id)
+        return if (sees == cfg.capabilities.vision) cfg else cfg.copy(capabilities = cfg.capabilities.copy(vision = sees))
+    }
+
+    /** 主模型在它那家还没测试通过时给出那一家(见 [Provider.untested]);任务因模型失败时据此提示去「重新测试」。 */
+    fun untestedMainProvider(): Provider? {
+        val cfg = configFor(ModelRole.Main) ?: return null
+        return provider(cfg.providerId)?.takeIf { it.untested(cfg.model) }
     }
 
     /**
@@ -451,9 +566,14 @@ class ProviderStore(
         val p = provider(cfg.providerId)
         val source = UsageSource(cfg.providerId, p?.name ?: cfg.name, cfg.model, UsagePurpose.of(role))
         val listed = listedOf(cfg)
-        modelFactory(cfg, apiKey(cfg.id), listed?.endpoint, ClientSetup(
+        val settings = p?.contextSettings?.get(cfg.model)
+        val configured = if (settings == null) cfg else cfg.copy(capabilities = cfg.capabilities.copy(
+            contextTokens = settings.windowTokens ?: cfg.capabilities.contextTokens,
+            compactionTriggerTokens = settings.triggerTokens,
+        ))
+        modelFactory(configured, apiKey(cfg.id), listed?.endpoint, ClientSetup(
             headers(p?.sessionHeader, session), reasoningEffort = _roles.value.reasoningEffort(role),
-            thinkingTypes = listed?.thinkingTypes,
+            thinkingTypes = listed?.thinkingTypes, readTimeoutSeconds = settings?.readTimeoutSeconds,
         )).metered(source, usage)
     }
 
@@ -506,7 +626,7 @@ class ProviderStore(
         } catch (e: ModelError.SignInExpired) {
             return ModelListResult.Failed(ListFailure.Auth)
         } catch (e: ModelError) {
-            return ModelListResult.Failed(if (e is ModelError.Network) ListFailure.Network else ListFailure.Server)
+            return ModelListResult.Failed(if (e is ModelError.Network || e is ModelError.Proxy) ListFailure.of(e) else ListFailure.Server)
         }
         val base = provider(p.id)?.baseUrl ?: p.baseUrl
         return listModels(p.kind, base, token, p.sessionHeader)
@@ -665,6 +785,8 @@ class ProviderStore(
      * 请求头四种协议一样带。回复上限([ClientSetup.maxOutputTokens])只给 Messages(本来就必填)和 generateContent;
      * Chat Completions 不给(有的模型只认 `max_tokens`、有的只认 `max_completion_tokens`,给错了整个请求被拒,
      * 连接测试就会误报),Responses 也不给(ChatGPT 套餐那条路不收 `max_output_tokens`)。
+     * 读超时([ClientSetup.readTimeoutSeconds])配置了的按它派生 client(共享连接池与代理),慢速本地推理可调大(#295);
+     * 没配置用全局默认(120 秒)。派生只在建模型时发生一次,不影响别的模型。
      */
     private fun buildModel(cfg: ProviderConfig, apiKey: String?, endpoint: ModelEndpoint?, setup: ClientSetup): ChatModel {
         val (kind, adapterBase) = adapterFor(cfg, endpoint)
@@ -672,6 +794,11 @@ class ProviderStore(
         val baseUrl = if (cfg.kind == ProviderConfig.Kind.Xai) {
             provider(cfg.providerId)?.baseUrl?.takeIf { it.isNotBlank() } ?: adapterBase
         } else adapterBase
+        val defaultHttp = http
+        val http = setup.readTimeoutSeconds
+            ?.takeIf { it in MODEL_READ_TIMEOUT_SECONDS }
+            ?.let { seconds -> defaultHttp.newBuilder().readTimeout(seconds.toLong(), TimeUnit.SECONDS).build() }
+            ?: defaultHttp
         return when (kind) {
             ProviderConfig.Kind.OpenAiCompat ->
                 OpenAiCompatModel(baseUrl, apiKey, cfg.model, cfg.capabilities, http, endpoint?.reasoningField, setup.headers,
@@ -727,8 +854,10 @@ class ProviderStore(
             keys = json.parseToJsonElement(keyFile.readText()).jsonObject.mapValues { it.value.jsonPrimitive.content }
         }
         migrate()
+        repairStaleContextDefaults()
         // 指向不存在的配置的选择退回默认,没人用的配置删掉;和文件里的不一样(含刚迁移的用途)才写回
         _roles.value = _roles.value.keepOnly(_configs.value.map { it.id }.toSet())
+        repairUnavailableReasoningEfforts()
         prune()
         if (configFile.isFile) {
             val text = configJson()
@@ -781,6 +910,39 @@ class ProviderStore(
         }
     }
 
+    /**
+     * 模型目录或客户端认识的档位变化后,旧选择不能继续原样发给服务端:能确定当前选项时,失效项退回默认;
+     * 没有档位元数据、协议本就不提供这项设置的旧配置不动,避免把仍可由服务端处理的值误删。
+     */
+    private fun repairUnavailableReasoningEfforts() {
+        val repaired = _roles.value.reasoningEfforts.mapNotNull { (role, effort) ->
+            val cfg = configFor(role) ?: return@mapNotNull null
+            val listed = provider(cfg.providerId)?.models?.firstOrNull { it.id == cfg.model }
+            val options = ReasoningOptions.of(cfg, listed)
+            if (options == null || effort in options.levels) role to effort else null
+        }.toMap()
+        _roles.value = _roles.value.copy(reasoningEfforts = repaired)
+    }
+
+    /**
+     * 预设的默认上下文更新后,把当年按旧默认存下的配置跟上去:仅当存着的正是旧默认、这家预设现在的默认已经不同、
+     * 用户没给这个模型单独写过窗口时才改;用户改过的任何值一律不动。只在 [load] 读入后跑一次,
+     * 改动随读入后的统一写回落盘。窗口按旧值 64k 时,压缩会频繁改写请求前缀,服务商的前缀缓存整段失效(见 [ProviderPresets])。
+     */
+    private fun repairStaleContextDefaults() {
+        val fixed = _configs.value.mapNotNull { c ->
+            val now = ProviderPresets.forBaseUrl(c.baseUrl)?.capabilities?.contextTokens
+                ?.takeIf { it != LEGACY_DEFAULT_CONTEXT_TOKENS }
+            if (now != null && c.capabilities.contextTokens == LEGACY_DEFAULT_CONTEXT_TOKENS &&
+                provider(c.providerId)?.contextSettings?.get(c.model)?.windowTokens == null
+            ) c.id to now else null
+        }.toMap()
+        if (fixed.isEmpty()) return
+        _configs.value = _configs.value.map { c ->
+            fixed[c.id]?.let { window -> c.copy(capabilities = c.capabilities.copy(contextTokens = window)) } ?: c
+        }
+    }
+
     private fun providerOf(o: JsonObject) = Provider(
         id = o.str("id"),
         name = o.str("name"),
@@ -790,6 +952,18 @@ class ProviderStore(
         sessionHeader = o["sessionHeader"]?.jsonPrimitive?.content ?: ProviderPresets.forBaseUrl(o.str("baseUrl"))?.sessionHeader,
         signIn = o["signIn"]?.jsonPrimitive?.content,
         verifiedModels = o["verifiedModels"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet().orEmpty(),
+        contextSettings = (o["contextSettings"] as? JsonObject).orEmpty().mapNotNull { (model, raw) ->
+            val entry = raw as? JsonObject ?: return@mapNotNull null
+            val settings = ModelContextSettings(entry.positiveInt("windowTokens"), entry.positiveInt("triggerTokens"),
+                entry.positiveInt("readTimeoutSeconds")?.takeIf { it in MODEL_READ_TIMEOUT_SECONDS })
+            if (settings == ModelContextSettings()) null else model to settings
+        }.toMap(),
+        visionOverrides = (o["visionOverrides"] as? JsonObject).orEmpty().mapNotNull { (model, raw) ->
+            (raw as? JsonPrimitive)?.booleanOrNull?.let { model to it }
+        }.toMap(),
+        typedModels = o["typedModels"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet().orEmpty(),
+        // 旧版本存下的没有这一项:那时每一家都走过「测试并保存」,按测过算
+        savedUntested = o["untested"]?.jsonPrimitive?.booleanOrNull ?: false,
         models = o["models"]?.jsonArray?.map { e ->
             val m = e.jsonObject
             ListedModel(
@@ -808,6 +982,7 @@ class ProviderStore(
                     }
                 },
                 unsupportedApis = m["unsupportedApis"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty(),
+                protocols = m["protocols"]?.jsonArray?.mapNotNull { ModelProtocol.of(it.jsonPrimitive.content) }?.takeIf { it.isNotEmpty() },
             )
         },
     )
@@ -849,18 +1024,31 @@ class ProviderStore(
     }
 
     private fun JsonObject.str(k: String) = this[k]!!.jsonPrimitive.content
+    private fun JsonObject.positiveInt(k: String) = (this[k] as? JsonPrimitive)?.intOrNull?.takeIf { it > 0 }
 
     private fun writeConfig() = writeAtomically(configFile, configJson())
 
-    private fun configJson(): String {
+    private fun configJson(providers: List<Provider> = _providers.value): String {
         val root = buildJsonObject {
             putJsonArray("services") {
-                _providers.value.forEach { p ->
+                providers.forEach { p ->
                     addJsonObject {
                         put("id", p.id); put("name", p.name); put("kind", p.kind.name); put("baseUrl", p.baseUrl)
                         p.sessionHeader?.let { put("sessionHeader", it) }
                         p.signIn?.let { put("signIn", it) }
+                        if (p.savedUntested) put("untested", true)
                         if (p.verifiedModels.isNotEmpty()) putJsonArray("verifiedModels") { p.verifiedModels.forEach { add(it) } }
+                        if (p.contextSettings.isNotEmpty()) putJsonObject("contextSettings") {
+                            for ((model, settings) in p.contextSettings) putJsonObject(model) {
+                                settings.windowTokens?.let { put("windowTokens", it) }
+                                settings.triggerTokens?.let { put("triggerTokens", it) }
+                                settings.readTimeoutSeconds?.let { put("readTimeoutSeconds", it) }
+                            }
+                        }
+                        if (p.visionOverrides.isNotEmpty()) putJsonObject("visionOverrides") {
+                            for ((model, sees) in p.visionOverrides) put(model, sees)
+                        }
+                        if (p.typedModels.isNotEmpty()) putJsonArray("typedModels") { p.typedModels.forEach { add(it) } }
                         p.models?.let { models ->
                             putJsonArray("models") {
                                 models.forEach { m ->
@@ -881,6 +1069,7 @@ class ProviderStore(
                                             }
                                         }
                                         if (m.unsupportedApis.isNotEmpty()) putJsonArray("unsupportedApis") { m.unsupportedApis.forEach { add(it) } }
+                                        m.protocols?.takeIf { it.isNotEmpty() }?.let { ps -> putJsonArray("protocols") { ps.forEach { add(it.wire) } } }
                                     }
                                 }
                             }
@@ -941,21 +1130,28 @@ class ProviderStore(
         private const val KEY_FILE = "provider-keys.json"
         private const val CHATGPT_HOST_FILE = "chatgpt-host.json"
 
+        /** 各家预设沿用的旧上下文默认值;预设改了默认后,存着这个值的配置由 [repairStaleContextDefaults] 跟上去。 */
+        private const val LEGACY_DEFAULT_CONTEXT_TOKENS = 64_000
+
         /** `uses` 里每个用途的 `use`:具体模型(另记 `config`)、用主模型、不用。旧版本的文件里只有 `roles`。 */
         private const val USE_MODEL = "model"
         private const val USE_MAIN = "main"
         private const val USE_NONE = "none"
 
-        private val http by lazy { OkHttpClient.Builder().readTimeout(120, TimeUnit.SECONDS).build() }
+        // 连服务商的客户端都经 NetProxy 建:走设置 › 网络代理,本机、局域网地址(本地模型)直连
+        private val http by lazy { NetProxy.shared.client(OkHttpClient.Builder().readTimeout(120, TimeUnit.SECONDS)) }
 
         /** 和对话模型共用的连接池;同一服务商的其他请求(如语音转写)也用它。 */
         val modelHttp: OkHttpClient get() = http
 
-        private val catalog by lazy { ModelCatalog(OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).build()) }
+        /** 列模型、账号登录换令牌用的:读超时短一些,同样走网络代理。 */
+        private val shortHttp by lazy { NetProxy.shared.client(OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS)) }
 
-        private val defaultChatGptAuth by lazy { ChatGptAuth(OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).build()) }
-        private val defaultOpenRouterAuth by lazy { OpenRouterAuth(OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).build()) }
-        private val defaultXaiAuth by lazy { XaiAuth(OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).build()) }
+        private val catalog by lazy { ModelCatalog(shortHttp) }
+
+        private val defaultChatGptAuth by lazy { ChatGptAuth(shortHttp) }
+        private val defaultOpenRouterAuth by lazy { OpenRouterAuth(shortHttp) }
+        private val defaultXaiAuth by lazy { XaiAuth(shortHttp) }
 
         /** ChatGPT 服务商的名字(品牌名,不随界面语言变)。 */
         const val CHATGPT_NAME = "ChatGPT"

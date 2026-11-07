@@ -62,6 +62,7 @@ class ShareTextTest {
         val screen = ShareScreen()
         val r = toolDispatcher(screen).execute(call("not a package", "hi"))
         assertEquals("false", r.content.s("ok"))
+        assertEquals("invalid_arguments", r.content.s("error"))
         assertTrue(screen.shared.isEmpty())
     }
 }

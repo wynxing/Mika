@@ -33,6 +33,12 @@ data class Turn(
     val keptPage: String? = null,
     /** 留下的那一页后来关掉的原因([com.wangzan101.mika.core.cap.web.KeptPageClose.wire]);还开着或没留为 null。 */
     val keptPageClosed: String? = null,
+    /** 这一轮存进对话的毫秒时刻;旧记录没有时为 null,不由文件时间猜测。 */
+    val atMs: Long? = null,
+    /** 实际核验的结果。未核验和没有该字段的旧记录均为 null。 */
+    val verified: Boolean? = null,
+    /** 电脑派发时的任务编号，在运行记录创建前也可用。 */
+    val remoteTaskId: String? = null,
 )
 
 object Conversation {
@@ -45,16 +51,22 @@ object Conversation {
     fun stopSummary(t: Turn): String? =
         t.outcome.trim().takeIf { t.status == "cancelled" && it.isNotEmpty() && it != CANCELLED_OUTCOME }
 
-    /** 把之前的轮次做成一条用户角色的参考消息,最近的在最后;太长就丢掉较早的轮次。没有轮次返回 null。 */
-    fun context(turns: List<Turn>, maxTurns: Int = 5, maxChars: Int = 4000): Message? {
+    /**
+     * 把之前的轮次做成一条用户角色的参考消息,最近的在最后;整条超过 [maxTokens](按 [TokenEstimate])就丢掉较早的轮次。
+     * 只剩一轮还超长时各字段分别截断(用户原话和结局都留一段),仍超长再整段截断。没有轮次返回 null。
+     */
+    fun context(turns: List<Turn>, maxTurns: Int = 5, maxTokens: Int = 2_500): Message? {
         var recent = turns.takeLast(maxTurns.coerceAtLeast(0))
         if (recent.isEmpty()) return null
+        val header = "$HEADER\n"
         fun render(ts: List<Turn>, clip: Int) = ts.mapIndexed { i, t -> line(i + 1, t, clip) }.joinToString("\n")
-        while (recent.size > 1 && HEADER.length + 1 + render(recent, Int.MAX_VALUE).length > maxChars) recent = recent.drop(1)
+        while (recent.size > 1 && TokenEstimate.of(header + render(recent, Int.MAX_VALUE)) > maxTokens) recent = recent.drop(1)
         var body = render(recent, Int.MAX_VALUE)
-        if (HEADER.length + 1 + body.length > maxChars) {
-            // 只剩一轮还超长:各字段截断
-            body = render(recent, ((maxChars - HEADER.length) / 3).coerceAtLeast(20))
+        val room = (maxTokens - TokenEstimate.of(header)).coerceAtLeast(20)
+        if (TokenEstimate.of(header + body) > maxTokens) {
+            // 只剩一轮还超长:各字段截断,原话和结局各留一段
+            body = render(recent, room / 3)
+            if (TokenEstimate.of(header + body) > maxTokens) body = TokenEstimate.clip(body, room, "…")
         }
         return Message(Role.User, listOf(Part.Text("$HEADER\n$body")), Author.Mika)
     }
@@ -79,5 +91,6 @@ object Conversation {
         return "$n. The user said: ${t.userText.clip(clip)}; $result$kept"
     }
 
-    private fun String.clip(max: Int) = if (length <= max) this else take(max) + "…"
+    /** 截到 [max] 个 token(含末尾的「…」)。 */
+    private fun String.clip(max: Int) = if (max == Int.MAX_VALUE || TokenEstimate.of(this) <= max) this else TokenEstimate.clip(this, max, "…")
 }

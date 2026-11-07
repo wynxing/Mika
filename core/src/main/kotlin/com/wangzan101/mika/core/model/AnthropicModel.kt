@@ -14,10 +14,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Anthropic Messages API。
@@ -25,7 +24,11 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * - 选了思考强度时开自适应思考(`thinking.type = adaptive`)并把档位放进 `output_config.effort`;选 `none` 时关掉。
  *   列表写明了模型接受哪几种思考方式([thinkingTypes])的,不接受的那种不发(什么都不发,按服务端默认)。
  *   思考块的 `signature` 连同收到它的地址存在 [Part.Thinking.opaque] 里([SignedThinking]),
- *   带工具调用的回合原样回传给同一个地址(不回传会被服务端拒绝)。
+ *   带工具调用的回合原样回传给同一个地址(不回传会被服务端拒绝),块的顺序照收到的不变。
+ *   签名还和产生它时的系统提示词、工具、前面的消息绑定;这些变了(展开一组工具、压缩历史等)以后,Claude 5.1 起的模型可能
+ *   拒绝回传的思考块([STALE_THINKING]),这时按文档的恢复办法去掉思考块再发一次(Mika 在这些模型上开思考只会是自适应思考,文档说
+ *   自适应思考不要求助手回合以思考块开头;这里把这次带的都去掉,见 [dropStaleThinking]),之后的请求也不再带它们
+ *   ([staleThinking])。
  * - 相邻同角色消息合并(Anthropic 要求 user/assistant 交替)。
  */
 class AnthropicModel(
@@ -57,9 +60,16 @@ class AnthropicModel(
     private val maxTokens = maxTokens ?: if (thinkingType == "adaptive") THINKING_MAX_TOKENS else DEFAULT_MAX_TOKENS
     private val json = Json { ignoreUnknownKeys = true }
     private val ephemeral = buildJsonObject { put("type", "ephemeral") }
+    /**
+     * 被拒的那次请求带的思考块([Part.Thinking.opaque]);历史里还留着,之后的请求都不带。
+     * 每个任务建一个模型,子任务和它共用,所以可能有几个协程同时用。
+     */
+    private val staleThinking: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     override suspend fun complete(system: String, messages: List<Message>, tools: List<ToolSpec>): ModelReply {
-        val (status, retryAfter, text) = HttpSupport.execute(http, request(system, messages, tools, stream = false))
+        val (status, retryAfter, text) = dropStaleThinking(messages) {
+            HttpSupport.execute(http, request(system, messages, tools, stream = false))
+        }
         if (status !in 200..299) throw mapError(status, retryAfter, text)
         return parse(text)
     }
@@ -68,7 +78,10 @@ class AnthropicModel(
         system: String, messages: List<Message>, tools: List<ToolSpec>, onText: (String) -> Unit,
     ): ModelReply {
         val stream = AnthropicStream(endpoint, onText, ::parseUsage)
-        val (status, retryAfter, text) = HttpSupport.stream(http, request(system, messages, tools, stream = true), stream::accept)
+        // 被拒的那次没有事件(不是 2xx 时 HttpSupport.stream 不调 accept),重发接着用这个 stream
+        val (status, retryAfter, text) = dropStaleThinking(messages) {
+            HttpSupport.stream(http, request(system, messages, tools, stream = true), stream::accept)
+        }
         if (status !in 200..299) throw mapError(status, retryAfter, text)
         if (text.isNotEmpty()) return parse(text).also { reply ->
             reply.parts.filterIsInstance<Part.Text>().joinToString("") { it.text }.takeIf(String::isNotEmpty)?.let(onText)
@@ -76,7 +89,26 @@ class AnthropicModel(
         return stream.finish()
     }
 
-    private fun request(system: String, messages: List<Message>, tools: List<ToolSpec>, stream: Boolean): Request {
+    /**
+     * 发一次;服务端说回传的思考块前缀对不上([STALE_THINKING])时,把这次带的思考块都记进 [staleThinking] 再发一次(只一次)。
+     * 文档给的做法是去掉报错点名的那块和它之后的;这里全去掉,不用按 `messages.N` 找位置,代价是更早的有效思考也不带了。
+     * 这次没带思考块的不重发,照常报错。
+     */
+    private suspend fun dropStaleThinking(messages: List<Message>, send: suspend () -> RawResponse): RawResponse {
+        val sent = messages.filter { it.role == Role.Assistant }.flatMap { it.parts }.filterIsInstance<Part.Thinking>()
+            .filter(::replays).mapNotNull { it.opaque }
+        val first = send()
+        if (first.status != 400 || STALE_THINKING !in first.body || !staleThinking.addAll(sent)) return first
+        return send()
+    }
+
+    /** 这一块回不回传:关掉思考时不带;别的地址收到的不带(签名只有发它的服务认);被拒的那次请求带过的不带([staleThinking])。 */
+    private fun replays(p: Part.Thinking): Boolean {
+        val opaque = p.opaque ?: return false
+        return thinkingType != "disabled" && opaque !in staleThinking && SignedThinking.block(p, endpoint) != null
+    }
+
+    private suspend fun request(system: String, messages: List<Message>, tools: List<ToolSpec>, stream: Boolean): Request {
         val systemText = (listOf(system) + messages.filter { it.role == Role.System }
             .map { m -> m.parts.filterIsInstance<Part.Text>().joinToString("\n") { it.text } })
             .filter { it.isNotEmpty() }.joinToString("\n\n")
@@ -109,7 +141,7 @@ class AnthropicModel(
             .withHeaders(headers)
             .header("x-api-key", apiKey)
             .header("anthropic-version", "2023-06-01")
-            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .postInference(InferenceProtocol.Anthropic, payload)
             .build()
     }
 
@@ -117,8 +149,8 @@ class AnthropicModel(
         status == 401 || status == 403 -> ModelError.Auth()
         status == 402 || body.contains("credit balance is too low") -> ModelError.QuotaExceeded()
         status == 429 -> ModelError.RateLimited(HttpSupport.retryAfterMs(retryAfter))
-        status == 413 || body.contains("prompt is too long") -> ModelError.ContextTooLong()
-        status == 404 -> ModelError.ModelNotFound(model)
+        status == 413 || body.contains("prompt is too long") || ModelHttp.contextTooLong(status, body) -> ModelError.ContextTooLong()
+        status == 404 -> ModelError.ModelNotFound(model, ModelAccessErrors.jsonDetail(body))
         status == 529 || body.contains("overloaded_error") -> ModelError.Server(529)
         status in 500..599 -> ModelError.Server(status)
         else -> ModelError.BadResponse("HTTP $status ${body.take(200)}")
@@ -179,22 +211,19 @@ class AnthropicModel(
         return results + rest
     }
 
-    private fun assistantBlocks(m: Message): List<JsonObject> {
-        // 开思考时,带工具调用的回合必须把上一条助手消息的思考块连同签名原样带回。
-        // 明确关掉思考时不带,免得和当前请求的思考配置冲突。别的地址收到的不带(签名只有发它的服务认)。
-        val thinking = if (thinkingType == "disabled") emptyList()
-            else m.parts.filterIsInstance<Part.Thinking>().mapNotNull { SignedThinking.block(it, endpoint) }
-        val blocks = m.parts.mapNotNull { p ->
-            when (p) {
-                is Part.Text -> if (p.text.isEmpty()) null else buildJsonObject { put("type", "text"); put("text", p.text) }
-                is Part.ToolCall -> buildJsonObject {
-                    put("type", "tool_use"); put("id", p.id); put("name", p.name)
-                    put("input", try { json.parseToJsonElement(p.argsJson).jsonObject } catch (e: Exception) { JsonObject(emptyMap()) })
-                }
-                else -> null
+    // 开思考时,带工具调用的回合必须把上一条助手消息的思考块连同签名原样带回,块的顺序照收到的:
+    // 新模型在工具调用前写的进度说明是单独的思考块,排在文字后面;挪到前面,服务端会当作前面的内容改过了。
+    // 明确关掉思考时不带,免得和当前请求的思考配置冲突;别的地址收到的、被拒的那次请求带过的也不带([replays])。
+    private fun assistantBlocks(m: Message): List<JsonObject> = m.parts.mapNotNull { p ->
+        when (p) {
+            is Part.Thinking -> if (replays(p)) SignedThinking.block(p, endpoint) else null
+            is Part.Text -> if (p.text.isEmpty()) null else buildJsonObject { put("type", "text"); put("text", p.text) }
+            is Part.ToolCall -> buildJsonObject {
+                put("type", "tool_use"); put("id", p.id); put("name", p.name)
+                put("input", try { json.parseToJsonElement(p.argsJson).jsonObject } catch (e: Exception) { JsonObject(emptyMap()) })
             }
+            else -> null
         }
-        return thinking + blocks
     }
 
     private fun parse(text: String): ModelReply {
@@ -239,7 +268,7 @@ class AnthropicModel(
         fun n(k: String) = (u[k] as? JsonPrimitive)?.intOrNull
         val inT = n("input_tokens") ?: return null
         val cached = n("cache_read_input_tokens") ?: 0
-        // Anthropic 的 input_tokens 不含缓存部分;统一成总输入口径
+        // Anthropic 的 input_tokens 不含缓存部分;统一成总输入口径。output_tokens 含思考但不单独报,reasoningTokens 记 0
         return Usage(inT + cached + (n("cache_creation_input_tokens") ?: 0), n("output_tokens") ?: 0, cached)
     }
 }
@@ -258,19 +287,19 @@ private class AnthropicStream(
     private val json = Json { ignoreUnknownKeys = true }
     private val blocks = sortedMapOf<Int, Block>()
     private val visible = StringBuilder()
-    private var usage: Usage? = null
+    private var usage: JsonObject? = null
     private var reason: String? = null
     private var stopped = false
 
-    fun accept(data: String) {
+    fun accept(data: String): Boolean {
         val root = try { json.parseToJsonElement(data).jsonObject }
         catch (e: Exception) { throw ModelError.BadResponse("流式响应不是合法 JSON", e) }
         when ((root["type"] as? JsonPrimitive)?.contentOrNull) {
-            "message_start" -> usage = usageOf((root["message"] as? JsonObject)?.get("usage"))
+            "message_start" -> usage = (root["message"] as? JsonObject)?.get("usage") as? JsonObject
             "content_block_start" -> {
-                val index = (root["index"] as? JsonPrimitive)?.intOrNull ?: return
-                val b = root["content_block"] as? JsonObject ?: return
-                val type = (b["type"] as? JsonPrimitive)?.contentOrNull ?: return
+                val index = (root["index"] as? JsonPrimitive)?.intOrNull ?: return false
+                val b = root["content_block"] as? JsonObject ?: return false
+                val type = (b["type"] as? JsonPrimitive)?.contentOrNull ?: return false
                 blocks[index] = Block(type,
                     id = (b["id"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
                     name = (b["name"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
@@ -284,9 +313,9 @@ private class AnthropicStream(
                 }
             }
             "content_block_delta" -> {
-                val index = (root["index"] as? JsonPrimitive)?.intOrNull ?: return
-                val block = blocks[index] ?: return
-                val delta = root["delta"] as? JsonObject ?: return
+                val index = (root["index"] as? JsonPrimitive)?.intOrNull ?: return false
+                val block = blocks[index] ?: return false
+                val delta = root["delta"] as? JsonObject ?: return false
                 when ((delta["type"] as? JsonPrimitive)?.contentOrNull) {
                     "text_delta" -> (delta["text"] as? JsonPrimitive)?.contentOrNull?.let {
                         block.text.append(it); visible.append(it); onText(visible.toString())
@@ -298,12 +327,15 @@ private class AnthropicStream(
             }
             "message_delta" -> {
                 reason = ((root["delta"] as? JsonObject)?.get("stop_reason") as? JsonPrimitive)?.contentOrNull ?: reason
-                val output = ((root["usage"] as? JsonObject)?.get("output_tokens") as? JsonPrimitive)?.intOrNull
-                if (output != null) usage = usage?.copy(outputTokens = output)
+                // 用量是累计值:带了整数的字段(输出,也可能有输入、缓存)覆盖 message_start 的,没带的、null 的沿用;收尾时再解析
+                (root["usage"] as? JsonObject)?.let { delta ->
+                    usage = JsonObject(usage.orEmpty() + delta.filterValues { (it as? JsonPrimitive)?.intOrNull != null })
+                }
             }
             "message_stop" -> stopped = true
             "error" -> throw ModelError.BadResponse(root["error"].toString().take(200))
         }
+        return stopped
     }
 
     fun finish(): ModelReply {
@@ -331,13 +363,19 @@ private class AnthropicStream(
             "max_tokens" -> StopReason.MaxTokens
             else -> StopReason.Other
         }
-        return ModelReply(parts, stop, usage)
+        return ModelReply(parts, stop, usageOf(usage))
     }
 }
 
 /** 默认回复上限;开了思考时思考也占这个额度,4K 往往在出答案前就用完,给 [THINKING_MAX_TOKENS]。 */
 private const val DEFAULT_MAX_TOKENS = 4096
 private const val THINKING_MAX_TOKENS = 16_000
+
+/**
+ * 回传的思考块前缀对不上时报错里的一句(Anthropic 文档 Preserved thinking 一节的原文)。
+ * 只有前半句「Invalid `signature` in `thinking` block」、没有这一句的是签名本身坏了,不重发,照常报错。
+ */
+private const val STALE_THINKING = "bound to a different conversation"
 
 /**
  * 记在 [Part.Thinking.opaque] 里的 Anthropic 思考块:带签名的 thinking 是 `{"endpoint":…,"signature":…}`,

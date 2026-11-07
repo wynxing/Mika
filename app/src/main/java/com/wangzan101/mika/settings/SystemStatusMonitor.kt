@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import android.os.UserManager
 import android.provider.Settings
 import com.wangzan101.mika.cap.phone.a11y.ScreenAccessibility
 import com.wangzan101.mika.core.shell.BuiltinShellControl
@@ -72,6 +73,7 @@ class SystemStatusMonitor(context: Context, private val shell: BuiltinShellContr
         sdkInt = Build.VERSION.SDK_INT,
         builtinShell = shell.status.value,
         accessibility = accessibilityState(),
+        userLocked = userLocked(),
         notificationsAllowed = app.getSystemService(NotificationManager::class.java).areNotificationsEnabled(),
         attentionLowered = channelLowered(TaskService.CHANNEL_ATTENTION),
         resultLowered = channelLowered(TaskService.CHANNEL_RESULT),
@@ -83,9 +85,11 @@ class SystemStatusMonitor(context: Context, private val shell: BuiltinShellContr
         developerOptions = DeveloperSettings.developerOptions(app.contentResolver),
         wirelessDebugging = DeveloperSettings.wirelessDebugging(app.contentResolver),
         wirelessDebuggingMissing = DeveloperSettings.wirelessDebuggingMissing(app.contentResolver),
+        developerSettingsMissing = DeveloperSettings.developerOptionsPageMissing(app.packageManager),
         usbDebugging = DeveloperSettings.usbDebugging(app.contentResolver),
         restrictedSettings = restrictedSettings(),
         helperRestart = shell.restart,
+        rootStart = shell.rootStart,
     )
 
     private fun channelImportance(id: String): Int? =
@@ -114,4 +118,8 @@ class SystemStatusMonitor(context: Context, private val shell: BuiltinShellContr
         val me = ComponentName(app, MikaAccessibilityService::class.java)
         return if (me in enabled) AccessibilityState.EnabledNotRunning else AccessibilityState.Off
     }
+
+    /** 开机后还没解锁过一次:这时无障碍服务绑不上是系统行为,不是故障。 */
+    private fun userLocked(): Boolean =
+        runCatching { app.getSystemService(UserManager::class.java)?.isUserUnlocked }.getOrNull() == false
 }

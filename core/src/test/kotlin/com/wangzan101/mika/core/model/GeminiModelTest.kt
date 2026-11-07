@@ -174,7 +174,7 @@ class GeminiModelTest {
         assertTrue(errorOf(404, err(404, "NOT_FOUND", "models/x is not found for API version v1beta, or is not supported for generateContent.")) is ModelError.ModelNotFound)
         assertTrue(errorOf(400, err(400, "INVALID_ARGUMENT", "models/x is not found for API version v1beta, or is not supported for generateContent.")) is ModelError.ModelNotFound)
         assertTrue(errorOf(404, err(404, "NOT_FOUND", "Gemini x is no longer available.")) is ModelError.ModelNotAvailable)
-        assertTrue(errorOf(404, err(404, "NOT_FOUND", "models/x not found")) is ModelError.ModelNotFound)
+        assertEquals("models/x not found", (errorOf(404, err(404, "NOT_FOUND", "models/x not found")) as ModelError.ModelNotFound).detail)
         assertTrue(errorOf(403, err(403, "PERMISSION_DENIED", "Your project does not have access to model x")) is ModelError.ModelNotAvailable)
         assertEquals(503, (errorOf(503, err(503, "UNAVAILABLE", "busy")) as ModelError.Server).status)
     }
@@ -221,7 +221,8 @@ class GeminiModelTest {
 
     @Test fun outputTokensIncludeThoughts() = runTest {
         server.enqueue(ok("""{"candidates":[{"content":{"parts":[{"text":"x"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"thoughtsTokenCount":7}}"""))
-        assertEquals(Usage(10, 12, 0), model().complete("s", user, emptyList()).usage)
+        // 思考另记一份:不算上下文增长(见 UsageMeter)
+        assertEquals(Usage(10, 12, 0, reasoningTokens = 7), model().complete("s", user, emptyList()).usage)
     }
 
     @Test fun sanitizeKeepsPropertyNamesLikeKeywords() = runTest {

@@ -19,6 +19,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.wangzan101.mika.ChineseUi
 import com.wangzan101.mika.MikaApp
 import com.wangzan101.mika.cap.phone.a11y.DeviceSupport.pollUntil
+import com.wangzan101.mika.core.agent.QuoteMessage
 import com.wangzan101.mika.core.model.ChatModel
 import com.wangzan101.mika.core.model.Message
 import com.wangzan101.mika.core.model.ModelReply

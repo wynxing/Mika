@@ -14,23 +14,29 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.wangzan101.mika.core.model.Capabilities
 import com.wangzan101.mika.core.model.ListedModel
 import com.wangzan101.mika.core.model.ModelRole
 import com.wangzan101.mika.settings.Provider
+import com.wangzan101.mika.settings.AesGcmKeyCipher
+import com.wangzan101.mika.settings.ModelContextSettings
+import com.wangzan101.mika.settings.ProviderStore
 import com.wangzan101.mika.settings.ProviderConfig
 import com.wangzan101.mika.settings.ProviderPresets
 import com.wangzan101.mika.settings.RoleChoice
 import com.wangzan101.mika.settings.RoleChoices
 import com.wangzan101.mika.ui.theme.MikaTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.junit.rules.TemporaryFolder
 
 /** 欢迎页、配置模型一页(上手和设置共用)、选用途页、服务商详情、全部模型和「用作」面板(只用假数据,不联网)。 */
 @RunWith(AndroidJUnit4::class)
@@ -38,13 +44,15 @@ class ModelSetupScreenTest {
     @get:Rule(order = Int.MIN_VALUE) val chinese = ChineseUi()
 
     @get:Rule val compose = createComposeRule()
+    @get:Rule val tmp = TemporaryFolder()
     private val calls = mutableListOf<String>()
     private val caps = Capabilities(toolCalls = true, vision = false, contextTokens = 64_000, reasoning = false)
 
     private val actions = ModelSetupActions(
         selectPreset = { calls += "preset $it" }, testAndSave = { calls += "test" }, openForm = { calls += "open form" },
+        saveUntested = { calls += "save untested" },
         openProvider = { calls += "provider $it" }, pickRole = { calls += "role $it" }, next = { calls += "next" },
-        openSignIn = { calls += "signin $it" },
+        openUsage = { calls += "usage" }, openSignIn = { calls += "signin $it" },
     )
 
     private val form = AddForm.of(ProviderPresets.all.first()).copy(apiKey = "sk")
@@ -78,8 +86,24 @@ class ModelSetupScreenTest {
         assertEquals(listOf("test", "preset Kimi"), calls)
     }
 
+    /** 「不测试,直接保存」先问一次:说清后果,取消了就什么都不做,确认了才存。 */
+    @Test fun saveWithoutTestAsksBeforeSaving() {
+        show(ModelSetupUi(form))
+        compose.onNodeWithTag("setup-save-untested").performScrollTo().performClick()
+        compose.onNodeWithText(ModelSetupCopy.SAVE_UNTESTED_TITLE).assertIsDisplayed()
+        compose.onNodeWithText(ModelSetupCopy.SAVE_UNTESTED_BODY).assertIsDisplayed()
+        // 取消:什么都没存
+        compose.onNodeWithText("取消").performClick()
+        assertTrue(calls.isEmpty())
+        // 确认:存
+        compose.onNodeWithTag("setup-save-untested").performScrollTo().performClick()
+        compose.onNodeWithText(ModelSetupCopy.SAVE_UNTESTED_CONFIRM).performClick()
+        assertEquals(listOf("save untested"), calls)
+    }
+
     @Test fun connectedProvidersAreListedAndNextEnables() {
         show(connected())
+        compose.onNodeWithTag("context-main").assertDoesNotExist()
         compose.onNodeWithText(ModelsCopy.PROVIDERS).assertIsDisplayed()
         compose.onNodeWithText("已连接 · 2 个模型 · 主模型、轻量模型在用").assertIsDisplayed()
         // 轻量卡「用主模型」下面也写着主模型名,所以只在主模型卡里找
@@ -95,6 +119,7 @@ class ModelSetupScreenTest {
     @Test fun settingsPageShowsAllThreeRolesWithoutBottomButton() {
         show(connected(RoleChoices(main = "c1", vision = RoleChoice.Off, light = RoleChoice.SameAsMain)), onboarding = false)
         compose.onNodeWithText(ModelsCopy.TITLE).assertIsDisplayed()
+        compose.onNodeWithText(ModelsCopy.LEAD).assertDoesNotExist()
         // 改动当场生效,左上角返回就行
         compose.onNodeWithTag("setup-next").assertDoesNotExist()
         ModelRole.entries.forEach { compose.onNodeWithText(ModelsCopy.roleLabel(it)).assertIsDisplayed() }
@@ -103,6 +128,63 @@ class ModelSetupScreenTest {
         compose.onNodeWithText(ModelsCopy.SAME_AS_MAIN).assertIsDisplayed()
         compose.onNodeWithTag("role-light").performClick()
         assertEquals(listOf("role Light"), calls)
+    }
+
+    @Test fun settingsPageOpensTokenUsageButOnboardingDoesNotShowIt() {
+        show(connected(), onboarding = false)
+        compose.onNodeWithText(UsageCopy.TITLE).performScrollTo().performClick()
+        assertEquals(listOf("usage"), calls)
+        calls.clear()
+        show(connected(), onboarding = true)
+        compose.onNodeWithText(UsageCopy.TITLE).assertDoesNotExist()
+    }
+
+    @Test fun contextFormValidatesPreviewsAndSavesTheModelUsedForNewTasks() {
+        val store = ProviderStore(tmp.root, AesGcmKeyCipher { error("Fixture has no API key") })
+        val provider = store.connect("Test", deepseek.kind, "https://example.test/v1", null, listOf(ListedModel("m")))
+        store.use(ModelRole.Main, provider.id, "m", caps.copy(contextTokens = 32_000))
+        compose.setContent { MikaTheme { ModelSetupScreen(store, onboarding = false, onBack = {}, onDone = {}) } }
+        val open = compose.onNodeWithTag("context-main")
+        val window = compose.onNodeWithTag("context-window")
+        val trigger = compose.onNodeWithTag("context-trigger")
+        val readTimeout = compose.onNodeWithTag("context-read-timeout")
+        val save = compose.onNodeWithTag("context-save")
+        val preview = compose.onNodeWithTag("context-effective")
+        compose.onNodeWithTag("context-light").assertDoesNotExist()
+        open.performScrollTo().performClick()
+        preview.assertTextContains("18000", substring = true)
+        for (invalid in listOf("0", "-1", "1e6", "2147483648")) {
+            window.performTextReplacement(invalid)
+            save.assertIsNotEnabled()
+        }
+        window.performTextReplacement("1000000")
+        preview.assertTextContains("967000", substring = true)
+        for (invalid in listOf("499999", "980001", "+600000")) {
+            trigger.performTextReplacement(invalid)
+            save.assertIsNotEnabled()
+        }
+        trigger.performTextReplacement("600000")
+        for (invalid in listOf("0", "-1", "1e6", "2147484", "2147483648")) {
+            readTimeout.performTextReplacement(invalid)
+            save.assertIsNotEnabled()
+        }
+        readTimeout.performTextReplacement("600")
+        save.assertIsEnabled().performClick()
+        compose.runOnIdle {
+            assertEquals(1_000_000, store.modelFor(ModelRole.Main)!!.capabilities.contextTokens)
+            assertEquals(600_000, store.modelFor(ModelRole.Light)!!.capabilities.compactionTriggerTokens)
+        }
+        open.performScrollTo().performClick()
+        trigger.assertTextContains("600000")
+        readTimeout.assertTextContains("600")
+        compose.onNodeWithText("重置").performScrollTo().performClick()
+        preview.assertTextContains("18000", substring = true)
+        compose.onNodeWithText("取消").performClick()
+        assertEquals(ModelContextSettings(1_000_000, 600_000, 600), store.provider(provider.id)!!.contextSettings["m"])
+        open.performScrollTo().performClick()
+        compose.onNodeWithText("重置").performScrollTo().performClick()
+        save.performClick()
+        compose.runOnIdle { assertEquals(null, store.provider(provider.id)!!.contextSettings["m"]) }
     }
 
     @Test fun visionPickerOffersSameAsMainAndOffAndListsEveryModel() {

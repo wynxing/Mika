@@ -18,6 +18,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.view.View
 import com.wangzan101.mika.R
+import com.wangzan101.mika.i18n.AppLanguage
 import com.wangzan101.mika.i18n.tr
 import com.wangzan101.mika.cap.phone.shell.SystemIntents
 import java.lang.ref.WeakReference
@@ -38,6 +39,10 @@ class SelfCheckTargetActivity : Activity() {
     private lateinit var count: TextView
     private lateinit var tick: TextView
     private lateinit var strip: View
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLanguage.wrap(newBase))
+    }
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -104,6 +109,8 @@ class SelfCheckTargetActivity : Activity() {
         column.addView(Button(this).apply {
             id = R.id.selfcheck_button
             text = tr(R.string.selfcheck_target_button)
+            // 按钮默认按主题显示成全大写,读屏读到的也就变了样:照写的样子显示
+            isAllCaps = false
             setOnClickListener {
                 taps++
                 count.text = tr(R.string.selfcheck_target_taps, taps)

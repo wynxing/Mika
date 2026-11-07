@@ -4,10 +4,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.NonCancellable
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.database.ContentObserver
 import android.os.Build
+import android.os.UserManager
 import android.provider.Settings
 import com.wangzan101.mika.cap.phone.a11y.ScreenAccessibility
 import com.wangzan101.mika.core.shell.A11yLossRecord
@@ -26,6 +30,7 @@ import com.wangzan101.mika.core.shell.RecoveryPermissions
 import com.wangzan101.mika.core.shell.RecoveryPolicy
 import com.wangzan101.mika.core.shell.RestoreOutcome
 import com.wangzan101.mika.core.shell.ShellCommandRunner
+import com.wangzan101.mika.settings.FeatureFlags
 import com.wangzan101.mika.settings.RecoverySettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +41,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -69,6 +75,7 @@ class BuiltinShellRecovery(
         restart = { gap -> if (canWriteSecure()) restartDirectly(gap) else permissions.restartAccessibility(gap) },
         consent = { settings.consent.value },
         direct = ::canWriteSecure,
+        allowed = { !FeatureFlags.get(app).quitRequested() },
     )
 
     private fun canWriteSecure() =
@@ -89,7 +96,13 @@ class BuiltinShellRecovery(
                 write(AccessibilityList.without(current, me))
                 withContext(NonCancellable) {
                     delay(gapMs)
-                    write(AccessibilityList.with(read(), me))
+                    // 加回失败时把原来的列表(连同总开关)写回,不让 Mika 从列表里消失;这次仍按加回失败报
+                    try {
+                        write(AccessibilityList.with(read(), me))
+                    } catch (e: Exception) {
+                        runCatching { write(current.orEmpty()) }
+                        throw e
+                    }
                 }
             } else {
                 write(AccessibilityList.with(current, me))
@@ -111,7 +124,8 @@ class BuiltinShellRecovery(
     fun start() {
         if (started) return
         started = true
-        scope.launch { permissions.applyWhenRunning(control.status) }
+        val active = FeatureFlags.get(app).quitChanges().map { !it }
+        scope.launch { permissions.applyWhenRunning(control.status, active) }
         val service = accessibility
         // 启动时看一眼:被强行停止后系统会把服务从列表里拿掉,或者在列表里却迟迟不绑定;记下来给诊断信息
         val initial = service.value
@@ -123,7 +137,25 @@ class BuiltinShellRecovery(
             }
         }
         scope.launch { service.collect { if (it.connected) settings.accessibilitySeen = true } }
-        scope.launch { accessibilityRepair.watch(service, control.status) }
+        scope.launch { accessibilityRepair.watch(service, control.status, userUnlocked, active) }
+    }
+
+    /**
+     * 开机后用户解锁过没有([UserManager.isUserUnlocked]):没解锁时无障碍服务本来就绑不上,自动修复先不动;
+     * 收到 [Intent.ACTION_USER_UNLOCKED] 时重读一次,让自动修复再判断。整个进程一份。
+     */
+    private val userUnlocked: StateFlow<Boolean> by lazy {
+        fun read() = runCatching { app.getSystemService(UserManager::class.java)?.isUserUnlocked }.getOrNull() != false
+        callbackFlow {
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) { trySend(read()) }
+            }
+            val filter = IntentFilter(Intent.ACTION_USER_UNLOCKED)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) app.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            else app.registerReceiver(receiver, filter)
+            trySend(read()) // 注册前后之间的变化
+            awaitClose { runCatching { app.unregisterReceiver(receiver) } }
+        }.stateIn(scope, SharingStarted.Eagerly, read())
     }
 
     /** 系统列表里有没有 Mika(跟着系统设置的变化)和服务实例是否连着(跟着连上、断开)。整个进程一份。 */
@@ -158,8 +190,9 @@ class BuiltinShellRecovery(
 
     /** 开机后按已生效的「重启后自动恢复」重新打开无线调试并重起助手;不需要动手时返回 null。 */
     suspend fun restoreAfterBoot(): RestoreOutcome? {
-        // 没配对过(助手是电脑经 USB 起的):Mika 自己起不来助手,不去动无线调试
-        if (!control.paired) return null
+        // 没配对过(助手是电脑经 USB 起的):Mika 自己起不来助手,不去动无线调试;
+        // 用 root 启动时看门狗经 su 起助手,也不去动无线调试
+        if (!control.paired || control.rootStart) return null
         val holds = app.checkSelfPermission(PermissionCommands.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
         when (BootRestore.gate(Build.VERSION.SDK_INT, settings.consent.value, holds)) {
             BootRestore.Gate.Skip -> return null

@@ -61,11 +61,6 @@ class ProviderSpeechTest {
     }
 
     @Test
-    fun defaultTimeoutIsThirtySeconds() {
-        assertEquals(30_000L, ProviderSpeech.TRANSCRIBE_TIMEOUT_MS)
-    }
-
-    @Test
     fun tooShortRecordingIsEmptyFinalWithoutCalling() {
         var called = false
         val s = ProviderSpeech(FakeRecorder(300), { called = true; "x" }, scope)
@@ -91,6 +86,6 @@ class ProviderSpeechTest {
         gate.complete(Unit)
         val out = events(s)
         assertTrue("got $out", out.none { it is SpeechEvent.Final || it is SpeechEvent.Failed })
-        assertTrue(rec.cancelled >= 1)
+        assertEquals(1, rec.cancelled)
     }
 }

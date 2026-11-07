@@ -29,11 +29,34 @@ class ModelAccessErrorsTest {
         assertTrue(ModelAccessErrors.of(400, """{"error":{"message":"Function calling is not supported for this model"}}""", "x") is ModelError.ToolsUnsupported)
     }
 
-    /** 400 / 403 里说没有这个模型的:认成找不到模型;404 没说别的由调用方照旧处理。 */
+    /** 400 / 403 里说没有这个模型的:认成找不到模型,带上原话;404 没说别的由调用方照旧处理。 */
     @Test fun modelNotFoundInsideOtherStatuses() {
-        assertEquals("m", (ModelAccessErrors.of(400, """{"error":{"message":"Model Not Exist","type":"invalid_request_error"}}""", "m") as ModelError.ModelNotFound).model)
+        val nf = ModelAccessErrors.of(400, """{"error":{"message":"Model Not Exist","type":"invalid_request_error"}}""", "m") as ModelError.ModelNotFound
+        assertEquals("m", nf.model)
+        assertEquals("Model Not Exist", nf.detail)
         assertTrue(ModelAccessErrors.of(400, """{"error":{"code":"model_not_found"}}""", "m") is ModelError.ModelNotFound)
         assertNull(ModelAccessErrors.of(404, """{"error":{"code":"model_not_found","message":"The model `x` does not exist or you do not have access to it."}}""", "m"))
+    }
+
+    /** 找不到模型时只要 JSON 里的原话:地址不对时反向代理回的 HTML 页、空内容不当原话。 */
+    @Test fun jsonDetailTakesOnlyWhatJsonSays() {
+        assertEquals("none of group/rpa's models is ready", ModelAccessErrors.jsonDetail("""{"error":{"type":"not_found_error","message":"none of group/rpa's models is ready"}}"""))
+        assertEquals("no route", ModelAccessErrors.jsonDetail("""{"error":"no route"}"""))
+        assertEquals("Not Found", ModelAccessErrors.jsonDetail("""{"detail":"Not Found"}"""))
+        assertEquals("models/x not found", ModelAccessErrors.jsonDetail("""[{"error":{"code":404,"message":"models/x not found"}}]"""))
+        assertEquals("", ModelAccessErrors.jsonDetail("<html><head><title>404 Not Found</title></head></html>"))
+        assertEquals("", ModelAccessErrors.jsonDetail(""))
+        assertEquals("<html><head><title>404 Not Found</title></head></html>", ModelAccessErrors.detail("<html><head><title>404 Not Found</title></head></html>"))
+    }
+
+    /** 原话去掉首尾空白;太长的截短,末尾加「…」。 */
+    @Test fun longDetailIsClippedWithAnEllipsis() {
+        assertEquals("short", ModelAccessErrors.jsonDetail("""{"error":{"message":"  short \n"}}"""))
+        val long = "models/x is not found. " + "y".repeat(200)
+        val clipped = ModelAccessErrors.jsonDetail("""{"error":{"message":"$long"}}""")
+        assertEquals(161, clipped.length)
+        assertTrue(clipped, clipped.startsWith("models/x is not found. yyy") && clipped.endsWith("y…"))
+        assertEquals(clipped, ModelAccessErrors.detail("""{"error":{"message":"$long"}}"""))
     }
 
     /** 429 里说这个账号在这个模型上额度为零:换模型才行,认成用不了;其余 429(真限流、额度用完)交给调用方。 */
@@ -46,7 +69,8 @@ class ModelAccessErrorsTest {
         notAvailable(429, """{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED","details":[{"violations":[{"quotaValue":"0"}]}]}}""")
         notAvailable(429, """{"error":{"code":429,"message":"This model doesn't have a free quota tier. Please enable billing.","status":"RESOURCE_EXHAUSTED"}}""")
         // OpenAI 兼容的入口回的是数组
-        notAvailable(429, """[{"error":{"code":429,"message":"Quota exceeded for metric: free_tier_input_token_count, limit: 0","status":"RESOURCE_EXHAUSTED"}}]""")
+        val inArray = notAvailable(429, """[{"error":{"code":429,"message":"Quota exceeded for metric: free_tier_input_token_count, limit: 0","status":"RESOURCE_EXHAUSTED"}}]""")
+        assertEquals("Quota exceeded for metric: free_tier_input_token_count, limit: 0", inArray.detail)
         assertNull(ModelAccessErrors.of(429, """{"error":{"code":429,"message":"Quota exceeded for metric: requests_per_minute, limit: 10. Please retry in 7s.","status":"RESOURCE_EXHAUSTED"}}""", "m"))
         assertNull(ModelAccessErrors.of(429, """{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED"}}""", "m"))
         assertNull(ModelAccessErrors.of(429, """{"error":{"code":429,"message":"limit: 0.5 rps","status":"RESOURCE_EXHAUSTED"}}""", "m"))
@@ -69,6 +93,23 @@ class ModelAccessErrorsTest {
         )
         // 只说某个参数弃用了的不认
         assertNull(ModelAccessErrors.of(400, """{"error":{"message":"The parameter `max_tokens` is deprecated, use `max_completion_tokens`."}}""", "m"))
+    }
+
+    /** 400 里说这个模型不能走当前这个接口(服务商要求另一套形状):算这个模型用不了、接着试下一个,带上服务端的原话。 */
+    @Test fun modelCannotGoThroughThisEndpoint() {
+        val shape = """{"error":{"message":"Model claude-sonnet-5-5 must be called via /provider/v1/messages (Anthropic Messages shape).","type":"invalid_request_error","param":"model","code":"unsupported_model"}}"""
+        val e = notAvailable(400, shape)
+        assertEquals("m", e.model)
+        assertTrue(e.detail, e.detail.startsWith("Model claude-sonnet-5-5 must be called via /provider/v1/messages"))
+        // 只说错误代码的
+        notAvailable(400, """{"error":{"type":"invalid_request_error","param":"model","code":"unsupported_model"}}""")
+        notAvailable(400, """{"error":{"message":"This model is only supported in v1/responses and not in v1/chat/completions.","param":"model"}}""")
+        assertTrue(ModelAccessErrors.of(400, """{"error":{"message":"gpt-4o is not supported for this endpoint"}}""", "gpt-4o") is ModelError.ModelNotAvailable)
+        // 请求本身不对的不认,交给调用方按状态码说
+        assertNull(ModelAccessErrors.of(400, """{"error":{"message":"Invalid value for 'temperature': 3"}}""", "m"))
+        // 说的是 Key 不能用这个接口、不是模型:不认,403 照旧由调用方当 Key 的问题
+        assertNull(ModelAccessErrors.of(403, """{"error":{"message":"Your API key is not supported for this endpoint"}}""", "gpt-x"))
+        assertTrue(ModelHttp.openAiError(403, null, """{"error":{"message":"Your API key is not supported for this endpoint"}}""", "gpt-x") is ModelError.Auth)
     }
 
     /** Key、额度、请求本身不对的不认;401 一律不看。 */

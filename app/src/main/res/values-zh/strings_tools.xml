@@ -15,6 +15,7 @@
     <string name="tool_check_dialog">检查弹窗</string>
     <string name="tool_gesture">多点手势</string>
     <string name="tool_shell">系统命令</string>
+    <string name="tool_root">root 命令</string>
     <string name="tool_find_element">查找界面控件</string>
     <string name="tool_collect">采集多屏内容</string>
     <string name="tool_phone_run">连续操作手机</string>
@@ -28,6 +29,7 @@
     <string name="tool_switch_tab">切换网页标签</string>
     <string name="tool_switch_version">切换网页版本</string>
     <string name="tool_keep_page">保持网页开着</string>
+    <string name="tool_app_after_task">定下 App 做完后留着还是关掉</string>
     <string name="tool_read_page">读网页</string>
     <string name="tool_downloads">查看下载</string>
     <string name="tool_network">查看网页收到的数据</string>
@@ -40,6 +42,8 @@
     <string name="tool_find_skill">查找技能</string>
     <string name="tool_read_knowledge">查看 App/网站知识</string>
     <string name="tool_read_skill">查看技能</string>
+    <string name="tool_list_settings">查看设置</string>
+    <string name="tool_set_setting">改设置</string>
     <string name="tool_save_skill">保存技能</string>
     <string name="tool_explain_failure">说明没办成的原因</string>
     <string name="tool_ask_user">问你一个问题</string>

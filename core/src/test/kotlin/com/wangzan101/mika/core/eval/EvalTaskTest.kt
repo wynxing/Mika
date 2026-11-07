@@ -87,7 +87,6 @@ class EvalTaskTest {
         // 占位符引用了没声明的探针
         val undeclared = base.copy(goal = "版本 {probe:nope}")
         assertTrue(EvalTasks.validate(undeclared).any { "nope" in it })
-        assertTrue(PROBE_ALLOWLIST.getValue("android_release").startsWith("getprop "))
     }
 
     @Test fun validateRejectsDuplicateOrBadId() {

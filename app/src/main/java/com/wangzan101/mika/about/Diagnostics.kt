@@ -31,6 +31,8 @@ data class DiagnosticsSnapshot(
     val models: Models,
     val runs: List<Run>,
     val update: Update,
+    /** 语音转文字:选了什么、手机自带识别的情况;旧的调用处不给就不写这一段。 */
+    val speech: Speech? = null,
 ) {
     data class App(val versionName: String, val build: String, val installer: String?, val language: String)
 
@@ -60,6 +62,14 @@ data class DiagnosticsSnapshot(
          * 助手没连着或问不到为 null。
          */
         val appCopies: String? = null,
+        /** 配对钥匙在这个进程里的状况(没用过、读回、新建、读不出及原因);读不到为 null。 */
+        val adbKey: String? = null,
+        /** 这个进程里最近一次任务结束时 Mika 屏上的 App 留下、关掉了几个(只有个数,不列包名);还没有过为 null。 */
+        val appsAfterTask: String? = null,
+        /** 最近启动助手到达的固定阶段;这次进程还没启动过为 null。 */
+        val helperLaunchStage: String? = null,
+        /** 最近一次 Binder 交接拒绝的固定枚举;没有被拒过为 null。 */
+        val helperHandoffRejection: String? = null,
     )
 
     data class Recovery(
@@ -95,6 +105,19 @@ data class DiagnosticsSnapshot(
     data class Run(val startedAtMs: Long, val outcome: String, val failKind: String?, val judged: String?, val steps: Int, val model: String?)
 
     data class Update(val status: String, val latest: String?, val available: String?)
+
+    /**
+     * [choice] 是用户的选择(auto、system、off,或服务商模型「模型 @ 地址」);[systemAvailable]、[onDevice] 是系统说的能力,
+     * [silent] 是记成了不响应;[remembered] 是点名试通过的识别服务;[services] 是手机上登记的识别服务,每个一行。
+     */
+    data class Speech(
+        val choice: String,
+        val systemAvailable: Boolean,
+        val onDevice: Boolean,
+        val silent: Boolean,
+        val remembered: String?,
+        val services: List<String>,
+    )
 }
 
 /** 把 [DiagnosticsSnapshot] 写成一段纯文本:分段顺序固定,英文键,发到微信或 GitHub 都好读。最后整段再过一遍脱敏。 */
@@ -149,6 +172,15 @@ object Diagnostics {
                 (f.code?.let { " (code $it)" } ?: "") + f.detail.takeIf { it.isNotBlank() }?.let { " — ${it.take(MAX_ERROR)}" }.orEmpty())
         }
 
+        s.speech?.let { v ->
+            section("Speech")
+            line("speech to text", v.choice)
+            line("built-in recognition", if (!v.systemAvailable) "none" else "present" + (if (v.onDevice) ", on-device" else "") + (if (v.silent) ", marked no response" else ""))
+            v.remembered?.let { line("recognition service used", it) }
+            line("recognition services", if (v.services.isEmpty()) "none" else "${v.services.size}")
+            v.services.forEach { appendLine("- $it") }
+        }
+
         section("Recent runs")
         if (s.runs.isEmpty()) appendLine("none")
         s.runs.forEach { run ->
@@ -182,6 +214,8 @@ object Diagnostics {
         if (i.accessibilitySkipped) line("accessibility step", "skipped")
         if (i.repair) line("repair", "yes")
         line("developer options", onOff(i.developerOptions))
+        if (i.developerSettingsMissing) line("developer options page", "missing")
+        if (i.wirelessMissing) line("wireless debugging setting", "missing")
         line("USB debugging", onOff(i.usbDebugging))
         line("wireless debugging", p.wirelessDebuggingSetting?.let(::onOff) ?: "unreadable")
         line("accessibility", when (p.accessibility) {
@@ -208,7 +242,11 @@ object Diagnostics {
         line("attention channel", importance(p.attentionChannelImportance))
         line("Wi-Fi", when (p.wifiConnected) { true -> "connected"; false -> "not connected"; null -> "unknown" })
         line("last error", p.lastError?.takeIf { it.isNotBlank() }?.take(MAX_ERROR) ?: "none")
+        line("helper launch stage", p.helperLaunchStage ?: "not tried in this session")
+        line("helper handoff rejection", p.helperHandoffRejection ?: "none")
+        line("adb key status", p.adbKey ?: "unknown")
         line("app copies", p.appCopies ?: "unknown")
+        p.appsAfterTask?.let { line("apps after task", it) }
     }
 
     private fun StringBuilder.section(name: String) {

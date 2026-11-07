@@ -3,8 +3,12 @@ package com.wangzan101.mika.ui
 import com.wangzan101.mika.R
 import com.wangzan101.mika.i18n.trPlural
 import androidx.compose.ui.res.stringResource
+import android.content.ActivityNotFoundException
 import android.graphics.BitmapFactory
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts.CreateDocument
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -38,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -56,17 +62,43 @@ import com.wangzan101.mika.ui.theme.MikaIcons
 import com.wangzan101.mika.ui.theme.MikaTheme
 import com.wangzan101.mika.ui.theme.MikaType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
  * 一次运行的时间线(只读):顶部是目标、标准、一行小结(点开看时间去向)和结局(模型调用次数这类细节收在「更多详情」里),
  * 下面是竖线步骤,每步一行,点有画面的步骤看当时的画面。
  */
+/** 任务还在跑时,运行记录多久重读一次。 */
+private const val LIVE_REFRESH_MS = 1_000L
+
 @Composable
 fun RunTimelineScreen(vm: RunTimelineViewModel, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
-    val ui by produceState<TimelineUi>(TimelineUi.Loading, vm) { value = withContext(Dispatchers.IO) { vm.load() } }
+    // 还在跑就每秒再读一次运行记录(不自动滚到底:用户翻到哪就停在哪)
+    val ui by produceState<TimelineUi>(TimelineUi.Loading, vm) {
+        while (true) {
+            val next = withContext(Dispatchers.IO) { vm.load() }
+            value = next
+            if ((next as? TimelineUi.Ready)?.header?.running != true) break
+            delay(LIVE_REFRESH_MS)
+        }
+    }
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val saveLog = rememberLauncherForActivityResult(CreateDocument("application/x-ndjson")) { uri ->
+        if (uri != null) scope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                runCatching {
+                    val log = vm.usageLog()
+                    checkNotNull(context.contentResolver.openOutputStream(uri, "wt")).bufferedWriter().use { it.write(log) }
+                }.isSuccess
+            }
+            Toast.makeText(context, if (saved) R.string.timeline_exported else R.string.timeline_export_failed, Toast.LENGTH_SHORT).show()
+        }
+    }
 
     PageBackground {
         Column(Modifier.fillMaxSize()) {
@@ -78,7 +110,16 @@ fun RunTimelineScreen(vm: RunTimelineViewModel, onBack: () -> Unit) {
                     Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = bottom + 16.dp),
                 ) {
-                    item("header") { HeaderGroup(u.header) }
+                    item("header") {
+                        HeaderGroup(u.header) {
+                            try {
+                                saveLog.launch("mika-usage-${vm.runId}.jsonl")
+                            } catch (_: ActivityNotFoundException) {
+                                Toast.makeText(context, R.string.timeline_export_failed, Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                    item("trace") { RunTraceSection(vm.runId) }
                     if (u.steps.isNotEmpty()) {
                         item("label") { GroupLabel(trPlural(R.plurals.timeline_total_steps, u.steps.size)) }
                         item("steps") {
@@ -98,7 +139,7 @@ fun RunTimelineScreen(vm: RunTimelineViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-private fun HeaderGroup(h: TimelineHeader) {
+private fun HeaderGroup(h: TimelineHeader, onExport: () -> Unit) {
     val c = MikaTheme.colors
     var more by rememberSaveable { mutableStateOf(false) }
     GroupCard {
@@ -115,10 +156,23 @@ private fun HeaderGroup(h: TimelineHeader) {
             }
         }
         h.metrics?.let { RunMetricsSummary(it) }
-        ListRow(null, stringResource(R.string.timeline_outcome)) { RowValue(h.outcome, if (h.outcome == stringResource(R.string.outcome_succeeded)) ValueTone.Ok else ValueTone.Plain) }
+        h.stepLimit?.let { limit ->
+            ListRow(null, stringResource(R.string.timeline_step_limit)) {
+                RowValue(stringResource(R.string.timeline_step_limit_value, h.stepsUsed, limit))
+            }
+        }
+        // 还没跑完:这里说「进行中」,下面这些小结(核查、结局)等结束了才有
+        if (h.running) {
+            ListRow(null, stringResource(R.string.timeline_outcome)) { RowValue(stringResource(R.string.timeline_running), ValueTone.Plain) }
+        } else {
+            ListRow(null, stringResource(R.string.timeline_outcome)) {
+                RowValue(h.outcome, if (h.outcome == stringResource(R.string.outcome_succeeded)) ValueTone.Ok else ValueTone.Plain)
+            }
+        }
         if (h.verdict != stringResource(R.string.verify_none)) ListRow(null, stringResource(R.string.timeline_check)) { RowValue(h.verdict) }
         // 小结那一行已经写了用时
         if (h.metrics == null) h.duration?.let { d -> ListRow(null, stringResource(R.string.timeline_duration)) { RowValue(d) } }
+        ListRow(null, stringResource(R.string.timeline_export), stringResource(R.string.timeline_export_hint), onClick = onExport) { RowChevron() }
         ListRow(null, stringResource(R.string.timeline_more), onClick = { more = !more }) {
             RowValue(if (more) stringResource(R.string.collapse) else stringResource(R.string.expand))
             RowChevron()
@@ -180,15 +234,8 @@ private fun TimelineRow(s: TimelineStep, first: Boolean, last: Boolean, vm: RunT
             }
             s.activities.forEach { a ->
                 val action = if (a.count > 1) trPlural(R.plurals.timeline_viewed_times, a.count) else a.label
-                val effect = when (a.effect) {
-                    "changed", "done", "place_changed" -> stringResource(R.string.result_effective)
-                    "small_change" -> stringResource(R.string.effect_small_change)
-                    "unchanged", "no_effect" -> stringResource(R.string.result_unchanged)
-                    "completed" -> stringResource(R.string.result_completed)
-                    null -> ""
-                    // 错误码只对开发有意义,给人看的是没成功
-                    else -> stringResource(R.string.step_failed)
-                }
+                // 和对话里点开一步用的是同一份说法(错误码只对开发有意义,给人看的是没成功)
+                val effect = ChatCopy.effectLabel(a.effect)
                 Text(
                     listOfNotNull(action, a.target?.takeIf(String::isNotBlank), effect.takeIf(String::isNotBlank)).joinToString(" · "),
                     Modifier.padding(top = 3.dp), style = MikaType.Caption, color = c.ink2,

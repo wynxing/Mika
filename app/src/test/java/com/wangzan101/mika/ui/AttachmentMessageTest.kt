@@ -1,6 +1,7 @@
 package com.wangzan101.mika.ui
 
 import org.junit.Rule
+import com.wangzan101.mika.core.agent.AttachmentLines
 import com.wangzan101.mika.i18n.ChineseTexts
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -40,13 +41,13 @@ class AttachmentMessageTest {
     }
 
     @Test fun composeWritesWhatParseReads() {
-        val text = AttachmentMessage.compose("查一下", listOf("/workspace/inbox/a.png" to "3 KB", "/workspace/inbox/b.docx" to "1.0 MB"))
+        val text = AttachmentLines.compose("查一下", listOf("/workspace/inbox/a.png" to "3 KB", "/workspace/inbox/b.docx" to "1.0 MB"))
         assertEquals("查一下\n附件:/workspace/inbox/a.png(3 KB)\n附件:/workspace/inbox/b.docx(1.0 MB)", text)
         val p = AttachmentMessage.parse(text)
         assertEquals("查一下", p.words)
         assertEquals(1, p.photos.size)
         assertEquals(1, p.files.size)
-        assertEquals("附件:/workspace/inbox/a.png(3 KB)", AttachmentMessage.compose("", listOf("/workspace/inbox/a.png" to "3 KB")))
+        assertEquals("附件:/workspace/inbox/a.png(3 KB)", AttachmentLines.compose("", listOf("/workspace/inbox/a.png" to "3 KB")))
         // 交给任务的写法和以前一样
         assertEquals(text, ChatViewModel.withAttachments("查一下", listOf("/workspace/inbox/a.png" to 3072L, "/workspace/inbox/b.docx" to 1024L * 1024)))
     }

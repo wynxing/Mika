@@ -56,7 +56,7 @@ object DeviceSupport {
 
     fun newAgent(): Agent {
         val shell = shell()
-        val d = AgentDisplay(shell, 720, 1600, 320)
+        val d = AgentDisplay(shell, 720, 1600, 320, InstrumentationRegistry.getInstrumentation().targetContext.getSystemService(android.hardware.display.DisplayManager::class.java))
         return Agent(d, AndroidScreen(service(), shell, ready(d)))
     }
 
@@ -101,9 +101,11 @@ object DeviceSupport {
     fun mainScreenState(shell: IMikaShell): String {
         val topDisplay = sh("dumpsys window").lines().map { it.trim() }
             .firstOrNull { it.startsWith("mTopFocusedDisplayId=") }
+        checkNotNull(topDisplay) { "mTopFocusedDisplayId not found in dumpsys window" }
         val section = sh("dumpsys window displays").substringAfter("Display: mDisplayId=0", "")
             .substringBefore("Display: mDisplayId=").lines().map { it.trim() }
         val focus = section.firstOrNull { it.startsWith("mCurrentFocus=") }
+        checkNotNull(focus) { "mCurrentFocus not found for display 0" }
         val focusedApp = section.firstOrNull { it.startsWith("mFocusedApp=") }
             ?.let { Regex("u0 (\\S+)").find(it)?.groupValues?.get(1) }
         return "$topDisplay $focus focusedApp=$focusedApp topTask=${shell.topTaskId(android.view.Display.DEFAULT_DISPLAY)}"

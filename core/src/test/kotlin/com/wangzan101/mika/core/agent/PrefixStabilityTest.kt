@@ -60,7 +60,7 @@ class PrefixStabilityTest {
                     val msgs = body["messages"]!!.jsonArray.map { it.jsonObject }
                     val step = STEP.findAll(msgs.last().toString()).last().groupValues[1].toInt()
                     if (step in fail && tried.add(step)) return MockResponse().setResponseCode(429).setHeader("retry-after", "0")
-                    return MockResponse().setBody(reply(step, msgs).toString())
+                    return MockResponse().setBody(reply(step, msgs, TokenEstimate.of(body.toString())).toString())
                 }
             }
             start()
@@ -70,7 +70,8 @@ class PrefixStabilityTest {
             OpenAiCompatModel(server.url("/v1").toString().trimEnd('/'), "k", "m", Capabilities(true, vision, contextTokens, false), OkHttpClient())
     }
 
-    private fun reply(step: Int, msgs: List<JsonObject>): JsonObject {
+    /** [promptTokens]:像真服务商一样按这次请求的大小报输入用量(压缩时机按真实用量算,见 [UsageMeter])。 */
+    private fun reply(step: Int, msgs: List<JsonObject>, promptTokens: Int): JsonObject {
         // 最后一步不带调用,只回文字:就是最终回答
         if (step > STEPS) return buildJsonObject {
             putJsonArray("choices") {
@@ -79,7 +80,7 @@ class PrefixStabilityTest {
                     putJsonObject("message") { put("content", "看完了") }
                 })
             }
-            putJsonObject("usage") { put("prompt_tokens", 1000); put("completion_tokens", 10) }
+            putJsonObject("usage") { put("prompt_tokens", promptTokens); put("completion_tokens", 10) }
         }
         val (name, args) = when {
             step % 3 == 1 -> "phone_observe" to buildJsonObject {}
@@ -101,7 +102,7 @@ class PrefixStabilityTest {
                     }
                 })
             }
-            putJsonObject("usage") { put("prompt_tokens", 1000); put("completion_tokens", 10) }
+            putJsonObject("usage") { put("prompt_tokens", promptTokens); put("completion_tokens", 10) }
         }
     }
 
@@ -233,11 +234,12 @@ class PrefixStabilityTest {
     }
 
     @Test fun compaction() {
-        val bodies = run(Setup(contextTokens = 40_000)).single()
+        val bodies = run(Setup(contextTokens = 80_000)).single()
         val r = check(bodies, "compaction", appendOnly = false)
         assertTrue(bodies.any { ContextCompressor.HEADER in it.toString() })
-        // 越过触发点的那一次压缩一次(改写一次),之后只追加,再越过时才再压:30 步里只改写两次
-        assertEquals(listOf(15, 27), r.changed)
+        // 越过触发点的那一次压缩一次(改写一次),之后只追加,再长一个余量越过时才再压:30 步里改写两次
+        // (80K 窗口:提示词和展开的工具约 20K,触发点 47K,压到 30K 以下;增量估算不随普通文本的低用量向下校准)
+        assertEquals(listOf(12, 22), r.changed)
         assertTrue("${r.share}", r.share > 0.85)
     }
 

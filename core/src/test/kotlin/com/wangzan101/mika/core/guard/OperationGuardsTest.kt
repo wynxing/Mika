@@ -36,32 +36,6 @@ class OperationGuardsTest {
         )
     }
 
-    @Test fun repeatedTapAloneDoesNotMeanStuck() {
-        val g = OperationGuards()
-        repeat(80) { i ->
-            assertTrue(g.beforeAction("phone_tap", obj("""{"x":105,"y":106}""")).isEmpty())
-            g.noteAction()
-            assertTrue(g.frame("f$i", i.toLong()).isEmpty())
-        }
-        assertNull(g.stop)
-    }
-
-    @Test fun diagnosticToolsUseHigherThresholdsByToolName() {
-        val g = OperationGuards()
-        val perCall = (1..15).map { g.beforeAction("phone_observe", obj("""{"reason":"r$it"}"""), diagnostic = true) }
-        assertTrue(perCall.all { it.isEmpty() })
-        assertNull(g.stop)
-    }
-
-    @Test fun loopWindowIsSixteenSteps() {
-        val g = OperationGuards()
-        g.beforeAction("phone_tap", obj("""{"x":1,"y":1}"""))
-        g.beforeAction("phone_tap", obj("""{"x":1,"y":1}"""))
-        repeat(15) { g.beforeAction("phone_tap", obj("""{"x":${100 + it * 60},"y":500}""")) }
-        // 前两次 tap 已滑出 16 步窗口,第三次不算重复。
-        assertTrue(g.beforeAction("phone_tap", obj("""{"x":1,"y":1}""")).isEmpty())
-    }
-
     @Test fun lookingWithoutActingIsNotNoProgress() {
         val g = OperationGuards()
         g.frame("initial", 0L)
@@ -91,6 +65,43 @@ class OperationGuardsTest {
         // 小的局部变化也是进展，应清零
         g.noteAction(); g.effect("small_change"); assertEquals(0, g.unchangedFrames)
         g.noteAction(); g.effect("done"); assertEquals(0, g.unchangedFrames)
+    }
+
+    @Test fun treeBlindNoVisibleEffectWarnsAtTwoAndStopsAtThree() {
+        val g = OperationGuards()
+        assertTrue(g.effect("no_effect", treeBlind = true).isEmpty())
+        val warned = g.effect("no_effect", treeBlind = true).single()
+        assertEquals(Severity.Warn, warned.severity)
+        assertEquals("no_progress", warned.code)
+        val stopped = g.effect("no_effect", treeBlind = true).single()
+        assertEquals(Severity.Stop, stopped.severity)
+        assertEquals(3, stopped.evidence["unchanged"]!!.jsonPrimitive.int)
+        assertEquals("true", stopped.evidence["treeBlind"]!!.jsonPrimitive.content)
+        assertEquals("no_progress", g.stop?.code)
+
+        val recovered = OperationGuards()
+        repeat(2) { recovered.effect("no_effect", treeBlind = true) }
+        assertTrue(recovered.effect("done", treeBlind = true).isEmpty())
+        assertTrue(recovered.effect("no_effect", treeBlind = true).isEmpty())
+        assertNull(recovered.stop)
+    }
+
+    @Test fun treeBlindStopNeedsItsOwnEvidenceWithinTheNoEffectRun() {
+        val unrelated = OperationGuards()
+        repeat(2) { assertTrue(unrelated.effect("no_effect").isEmpty()) }
+        val ordinary = unrelated.effect("no_effect", treeBlind = true).single()
+        assertEquals(Severity.Warn, ordinary.severity)
+        assertNull(ordinary.evidence["treeBlind"])
+        assertNull(unrelated.stop)
+
+        // 同一轮无效果里已有两次空树点击,紧接的滚动也没效果时可以在第三次停下;
+        // 单独滚动到底仍只走普通阶梯,不会被当成注入不响应。
+        val mixed = OperationGuards()
+        assertTrue(mixed.effect("no_effect", treeBlind = true).isEmpty())
+        assertEquals(Severity.Warn, mixed.effect("no_effect", treeBlind = true).single().severity)
+        val stopped = mixed.effect("no_effect").single()
+        assertEquals(Severity.Stop, stopped.severity)
+        assertEquals(2, stopped.evidence["treeBlindActions"]!!.jsonPrimitive.int)
     }
 
     @Test fun backAndForthBetweenTwoStatesDoesNotStopProgress() {

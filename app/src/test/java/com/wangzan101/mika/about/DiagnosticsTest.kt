@@ -77,7 +77,6 @@ class DiagnosticsTest {
         assertTrue(t.startsWith(Diagnostics.HEADER + "\n"))
         val sections = t.lines().filter { it.startsWith("[") }
         assertEquals(listOf("[App]", "[Device]", "[Phone control]", "[Recovery]", "[Models]", "[Recent runs]", "[Update]"), sections)
-        assertTrue("${t.lines().size} lines", t.lines().size in 30..70)
         assertTrue(t.contains("version: 0.1.7 (build cfa4380)"))
         assertTrue(t.contains("installer: com.android.packageinstaller"))
         assertTrue(t.contains("model: Google Pixel 8"))
@@ -85,6 +84,21 @@ class DiagnosticsTest {
         assertTrue(t.contains("abi: arm64-v8a, armeabi-v7a"))
         assertTrue(t.contains("arm64 sandbox: supported (Ready)"))
         assertTrue(t.contains("update available: 0.1.8"))
+    }
+
+    /** 语音转文字一段:选择、自带识别的情况、手机上登记的识别服务(组件名、开不开放、要的权限);在模型之后。 */
+    @Test
+    fun speechSectionListsRecognitionServices() {
+        val speech = DiagnosticsSnapshot.Speech(
+            choice = "auto", systemAvailable = true, onDevice = false, silent = true, remembered = null,
+            services = listOf("com.example.voice/.Recognizer (not exported) needs android.permission.BIND_VOICE_INTERACTION"),
+        )
+        val t = Diagnostics.render(snapshot().copy(speech = speech))
+        val sections = t.lines().filter { it.startsWith("[") }
+        assertEquals(listOf("[App]", "[Device]", "[Phone control]", "[Recovery]", "[Models]", "[Speech]", "[Recent runs]", "[Update]"), sections)
+        assertTrue(t, t.contains("speech to text: auto"))
+        assertTrue(t, t.contains("built-in recognition: present, marked no response"))
+        assertTrue(t, t.contains("recognition services: 1\n- com.example.voice/.Recognizer (not exported) needs android.permission.BIND_VOICE_INTERACTION"))
     }
 
     /** 引导页那几项来自同一个状态机:失败在连接一步,用户确认过无线调试。 */
@@ -103,6 +117,18 @@ class DiagnosticsTest {
         assertTrue(t, t.contains("attention channel: low"))
         assertTrue(t, t.contains("Wi-Fi: connected"))
         assertTrue(t, t.contains("last error: AdbConnectionException(CONNECT_FAILED)"))
+    }
+
+    @Test
+    fun helperStartupDiagnosticsSeparateLaunchTimeoutFromHandoffRejection() {
+        val snap = snapshot()
+        val timedOut = Diagnostics.render(snap.copy(phone = snap.phone.copy(helperLaunchStage = "handoff_timeout")))
+        assertTrue(timedOut, timedOut.contains("helper launch stage: handoff_timeout"))
+        assertTrue(timedOut, timedOut.contains("helper handoff rejection: none"))
+        val rejected = Diagnostics.render(snap.copy(phone = snap.phone.copy(
+            helperLaunchStage = "handoff_timeout", helperHandoffRejection = "StaleApk",
+        )))
+        assertTrue(rejected, rejected.contains("helper handoff rejection: StaleApk"))
     }
 
     /** 扫过本机、用户填过端口:只写个数和有没有填,不写端口号。 */

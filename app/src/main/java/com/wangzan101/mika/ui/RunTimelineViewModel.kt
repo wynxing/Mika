@@ -58,9 +58,15 @@ data class TimelineHeader(
     val goal: String,
     val criteria: List<String>,
     val outcome: String,
+    /** 这次运行还没结束:结局、核查、统计都还没写齐,页面按秒接着读(见 [RunTimelineScreen])。 */
+    val running: Boolean = false,
     val verdict: String,
     val duration: String?,
     val modelCalls: Int,
+    /** 这次运行的步数上限;不限制或旧记录为 null。 */
+    val stepLimit: Int? = null,
+    /** 用了几步(和 [stepLimit] 一起显示);步数用完后的最后一轮收尾记作第上限加一步,不算一步,所以不超过上限。 */
+    val stepsUsed: Int = 0,
     val usedMemory: List<String> = emptyList(),
     /** 这次运行的小结;记录里没有开始事件时为 null(只显示用时)。 */
     val metrics: RunMetrics? = null,
@@ -79,9 +85,14 @@ sealed interface TimelineUi {
 
 /** 一次运行的只读时间线。[load] 读盘,要在后台线程调。 */
 class RunTimelineViewModel(
-    private val store: RunStore, private val runId: String,
+    private val store: RunStore, val runId: String,
     private val toolLabels: ToolLabels = ToolLabels(knownTools()),
     private val resolveMemory: (List<String>) -> List<String> = { emptyList() },
+    /**
+     * 这次运行的任务此刻还在跑。没有结束记录、任务也不在了(进程被杀、记录写到一半)的运行算已结束,
+     * 页面不为它一直按秒重读。
+     */
+    private val alive: (runId: String) -> Boolean = { false },
 ) {
     fun load(): TimelineUi {
         val summary = store.list().firstOrNull { it.id == runId }
@@ -91,22 +102,29 @@ class RunTimelineViewModel(
         val ended = events.filterIsInstance<RunEvent.TaskEnded>().lastOrNull()
         val startMs = summary?.startedAtMs ?: events.first().atMs
         val endMs = summary?.endedAtMs ?: ended?.atMs
+        val metrics = RunMetrics.of(events, runId)
         val header = TimelineHeader(
             goal = summary?.goal ?: started?.goal.orEmpty(),
             criteria = summary?.criteria?.takeIf { it.isNotEmpty() }
                 ?: events.filterIsInstance<RunEvent.Criteria>().lastOrNull()?.criteria.orEmpty(),
             outcome = outcomeLabel(summary?.outcome ?: ended?.outcome,
                 summary?.judged ?: events.filterIsInstance<RunEvent.OutcomeJudged>().lastOrNull()?.outcome),
+            // 结束事件或结束时间只要有一个就算跑完了;都没有时还要任务真在跑,界面据此决定要不要按秒重读
+            running = ended == null && summary?.endedAtMs == null && alive(runId),
             verdict = verdictLabel(summary?.verdict ?: events.filterIsInstance<RunEvent.Verifier>().lastOrNull()?.verdict),
             duration = endMs?.let { duration(it - startMs) },
             modelCalls = events.count { it is RunEvent.ModelReply },
+            stepLimit = started?.stepLimit,
+            stepsUsed = metrics?.steps?.let { n -> started?.stepLimit?.let { minOf(n, it) } ?: n } ?: 0,
             usedMemory = resolveMemory(events.filterIsInstance<RunEvent.MemoryUsed>().lastOrNull()?.ids.orEmpty()),
-            metrics = RunMetrics.of(events, runId),
+            metrics = metrics,
         )
         return TimelineUi.Ready(header, steps(events, toolLabels::label))
     }
 
     fun screen(screenshotId: Int): File? = store.screen(runId, screenshotId)
+
+    fun usageLog(): String = store.usageLog(runId)
 
     companion object {
         const val SAID_MAX = 80
@@ -276,10 +294,15 @@ class RunTimelineViewModel(
             "verification_failed" to tr(R.string.verify_failed),
             "parallel_tool_call_skipped" to tr(R.string.err_parallel_skipped),
             "screenshot_unavailable" to tr(R.string.err_no_screenshot),
+            "display_capture_unavailable" to tr(R.string.err_no_screenshot),
             "vision_unavailable" to tr(R.string.err_vision),
             "payment_requires_takeover" to tr(R.string.err_payment),
             "finish_missing_evidence" to tr(R.string.err_no_evidence),
             "double_click_unsupported" to tr(R.string.err_double_click),
+            "app_blocked" to tr(R.string.err_app_blocked),
+            "app_access_unverified" to tr(R.string.err_app_unverified),
+            "app_access_unavailable" to tr(R.string.err_app_unavailable),
+            "app_access_protected" to tr(R.string.err_app_protected),
         )
 
         private fun verifierTag(verdict: String) = when (verdict) {

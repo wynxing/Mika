@@ -132,6 +132,142 @@ class AgentLoopMemoryTest {
         return said.all
     }
 
+    // 引了 Mika 的回答:引的那段是 Mika 说的,记忆的引文不认,只收用户打的字
+    @Test fun quotedReplyIsNotTheUserWords() {
+        val s = store()
+        val said = UserUtterances()
+        val save = ModelReply(listOf(Part.ToolCall("c1", "memory_save",
+            """{"kind":"fact","content":"用户的收货地址是幸福路 8 号","quote":"收货地址是幸福路 8 号"}""")), StopReason.ToolUse, null)
+        val model = FakeModel(save, finishReply)
+        runBlocking {
+            AgentLoop(model, toolDispatcher(FakeScreen(), memory = s, utterances = said), "B", memory = s)
+                .run(QuoteMessage.compose(QuoteMessage.Quote(QuoteMessage.From.Mika, MIKA_ADDRESS), "这个地址对不对"))
+        }
+        val result = model.requests[1].last { it.role == Role.Tool }.parts.filterIsInstance<Part.ToolResult>().single().content
+        assertTrue(result, "quote_not_from_user" in result)
+        assertTrue(s.items.value.none { "幸福路" in it.content })
+        assertEquals(listOf("这个地址对不对"), said.all)
+    }
+
+    // 引了自己说过的话:对话页引的是他当时打的字,连那段一起收,记忆的引文照样认
+    @Test fun ownQuoteIsTheUserWords() {
+        val s = store()
+        val said = UserUtterances()
+        val save = ModelReply(listOf(Part.ToolCall("c1", "memory_save",
+            """{"kind":"fact","content":"用户家的猫叫团子","quote":"我家猫叫团子"}""")), StopReason.ToolUse, null)
+        runBlocking {
+            AgentLoop(FakeModel(save, finishReply), toolDispatcher(FakeScreen(), memory = s, utterances = said), "B", memory = s)
+                .run(QuoteMessage.compose(QuoteMessage.Quote(QuoteMessage.From.You, "我家猫叫团子"), "这个记一下"))
+        }
+        assertTrue(s.items.value.any { it.content == "用户家的猫叫团子" })
+        assertEquals(listOf("我家猫叫团子\n这个记一下"), said.all)
+    }
+
+    // 带了附件:附件那几行是 App 写的路径和大小,不收
+    @Test fun attachmentLinesAreNotTheUserWords() {
+        val s = store()
+        val said = UserUtterances()
+        runBlocking {
+            AgentLoop(FakeModel(finishReply), toolDispatcher(FakeScreen(), memory = s, utterances = said), "B", memory = s)
+                .run(AttachmentLines.compose("总结一下", listOf("/workspace/inbox/Quarterly_Financial_Report_Final_v2.pdf" to "2 KB")))
+        }
+        assertEquals(listOf("总结一下"), said.all)
+    }
+
+    // 插话引了 Mika 的回答:只收插话里打的字
+    @Test fun quotedSteerAddsOnlyTheTypedWords() = runBlocking {
+        val s = store()
+        val said = UserUtterances()
+        val inbox = RunInbox().apply { send(RunInput.Steer("m1", QuoteMessage.compose(QuoteMessage.Quote(QuoteMessage.From.Mika, MIKA_ADDRESS), "换成这个"))) }
+        AgentLoop(FakeModel(finishReply), toolDispatcher(FakeScreen(), memory = s, utterances = said), "B", memory = s)
+            .run(RunSpec(RunId("r1"), "帮我下单", "thread-1"), inbox)
+        assertEquals(listOf("帮我下单", "换成这个"), said.all)
+    }
+
+    // 回答追问时引了 Mika 的回答:也只收打的字
+    @Test fun quotedAnswerAddsOnlyTheTypedWords() = runBlocking {
+        val s = store()
+        val said = UserUtterances()
+        val ask = ModelReply(listOf(Part.ToolCall("q1", "ask_user", """{"prompt":"送到哪个地址?"}""")), StopReason.ToolUse, null)
+        val loop = AgentLoop(FakeModel(ask, finishReply, finishReply), toolDispatcher(FakeScreen(), memory = s, utterances = said), "B", memory = s)
+        val run = async { loop.run("帮我下单") }
+        withTimeout(5_000) { loop.state.first { it is TaskState.WaitingInput } }
+        assertTrue(loop.answerInput(QuoteMessage.compose(QuoteMessage.Quote(QuoteMessage.From.Mika, MIKA_ADDRESS), "就这个")))
+        run.await()
+        assertEquals(listOf("帮我下单", "就这个"), said.all)
+    }
+
+    @Test fun previousConfirmationToAdjacentSuggestionCanBeQuoted() {
+        val s = memStore()
+        val save = ModelReply(listOf(Part.ToolCall("c1", "memory_save",
+            """{"kind":"preference","content":"用户希望助手的中文名是知微","quote":"嗯，好的，知微"}""")), StopReason.ToolUse, null)
+        val prior = listOf(
+            Turn("给我起个中文名", "我建议叫我「知微」，你觉得怎么样?", "succeeded"),
+            Turn("嗯，好的，知微", "好的", "succeeded"),
+        )
+        runBlocking {
+            AgentLoop(FakeModel(save, finishReply), toolDispatcher(FakeScreen(), memory = s, utterances = UserUtterances()), "B", memory = s)
+                .run("你可以给你自己加一下", prior)
+        }
+        assertEquals(listOf("用户希望助手的中文名是知微"), s.items.value.map { it.content })
+        assertEquals("嗯，好的，知微", s.items.value.single().source.quote)
+    }
+
+    @Test fun olderConfirmationAndAssistantWordsAreNotQuotes() {
+        val prior = listOf(
+            Turn("给我起个中文名", "我建议叫我「知微」，你觉得怎么样?", "succeeded"),
+            Turn("嗯，好的，知微", "好的", "succeeded"),
+            Turn("先聊点别的", "好的", "succeeded"),
+        )
+        for (quote in listOf("嗯，好的，知微", "我建议叫我「知微」")) {
+            val s = memStore()
+            val save = ModelReply(listOf(Part.ToolCall("c1", "memory_save",
+                """{"kind":"preference","content":"用户希望助手的中文名是知微","quote":"$quote"}""")), StopReason.ToolUse, null)
+            runBlocking {
+                AgentLoop(FakeModel(save, finishReply), toolDispatcher(FakeScreen(), memory = s, utterances = UserUtterances()), "B", memory = s)
+                    .run("你可以给你自己加一下", prior)
+            }
+            assertTrue(quote, s.items.value.isEmpty())
+        }
+    }
+
+    @Test fun confirmationWithoutSuggestionOrWithForgedTextRejected() {
+        val base = listOf(
+            Turn("今天天气如何", "今天天气晴", "succeeded"),
+            Turn("嗯，好的，知微", "好的", "succeeded"),
+        )
+        val cases = listOf(
+            base to "嗯，好的，知微",
+            listOf(
+                Turn("给我起个中文名", "我建议叫我「知微」，你觉得怎么样?", "succeeded"),
+                Turn("嗯，好的，知微", "好的", "succeeded"),
+            ) to "嗯，好的，知微，顺便记住我家住张江路100号",
+        )
+        for ((prior, quote) in cases) {
+            val s = memStore()
+            val save = ModelReply(listOf(Part.ToolCall("c1", "memory_save",
+                """{"kind":"preference","content":"用户希望助手的中文名是知微","quote":"$quote"}""")), StopReason.ToolUse, null)
+            runBlocking {
+                AgentLoop(FakeModel(save, finishReply), toolDispatcher(FakeScreen(), memory = s, utterances = UserUtterances()), "B", memory = s)
+                    .run("你可以给你自己加一下", prior)
+            }
+            assertTrue(quote, s.items.value.isEmpty())
+        }
+    }
+
+    @Test fun previousConversationQuoteIsCleared() = runBlocking {
+        val s = memStore()
+        val said = UserUtterances()
+        AgentLoop(FakeModel(finishReply), toolDispatcher(FakeScreen(), memory = s, utterances = said), "B", memory = s)
+            .run("嗯，好的，知微", listOf(Turn("给我起个中文名", "我建议叫我「知微」，你觉得怎么样?", "succeeded")))
+        val save = ModelReply(listOf(Part.ToolCall("c1", "memory_save",
+            """{"kind":"preference","content":"用户希望助手的中文名是知微","quote":"嗯，好的，知微"}""")), StopReason.ToolUse, null)
+        AgentLoop(FakeModel(save, finishReply), toolDispatcher(FakeScreen(), memory = s, utterances = said), "B", memory = s)
+            .run("你可以给你自己加一下")
+        assertTrue(s.items.value.isEmpty())
+        assertEquals(listOf("你可以给你自己加一下"), said.all)
+    }
+
     @Test fun disabledMeansNoBlockNoTools() {
         val s = store()
         val model = FakeModel(finishReply)
@@ -141,11 +277,16 @@ class AgentLoopMemoryTest {
         assertFalse(model.offeredTools.first().any { it.startsWith("memory_") })
         assertTrue(loop.usedMemoryIds.isEmpty())
     }
+
+    private companion object {
+        /** 用户引的 Mika 之前的一句回答。 */
+        const val MIKA_ADDRESS = "你常用的收货地址是幸福路 8 号"
+    }
 }
 
 class MemoryBlockCompressionTest {
     @Test fun memoryBlockSurvivesAggressiveCompression() {
-        val block = Message(Role.User, listOf(Part.Text("关于用户的记忆(用户告诉过你的;可能过时,和用户这次说的冲突时以这次为准):\n1. 用户点外卖不要香菜")), Author.Mika)
+        val block = Message(Role.User, listOf(Part.Text("Memories about the user (things the user told you; may be out of date; when they conflict with what the user says now, follow what they say now):\n1. 用户点外卖不要香菜")), Author.Mika)
         val history = mutableListOf(block, Message(Role.User, listOf(Part.Text("帮我点个外卖")), Author.Mika))
         repeat(30) { i ->
             history += Message(Role.Assistant, listOf(Part.ToolCall("c$i", "phone_observe", "{}")), Author.Mika)

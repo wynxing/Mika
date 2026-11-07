@@ -14,6 +14,7 @@ import com.wangzan101.mika.cap.phone.PhoneServices
 import com.wangzan101.mika.cap.phone.a11y.AppCopyReader
 import com.wangzan101.mika.cap.phone.a11y.launchableApps
 import com.wangzan101.mika.cap.phone.shell.ShellService
+import com.wangzan101.mika.cap.phone.shell.adb.AndroidAdb
 import com.wangzan101.mika.cap.phone.setup.DeveloperSettings
 import com.wangzan101.mika.cap.phone.setup.PairingChannel
 import com.wangzan101.mika.cap.sandbox.SandboxState
@@ -28,6 +29,8 @@ import com.wangzan101.mika.record.RunStore
 import com.wangzan101.mika.settings.AccessibilityState
 import com.wangzan101.mika.settings.SystemStatus
 import com.wangzan101.mika.task.TaskService
+import com.wangzan101.mika.voice.SpeechChoice
+import com.wangzan101.mika.voice.SystemSpeech
 
 /** 引导页的输入:由系统状态加上引导页自己记的几项(用户确认过的、跳过的、回头重做的)组成。引导页和诊断信息共用这一份。 */
 fun SystemStatus.setupInputs(
@@ -46,7 +49,7 @@ fun SystemStatus.setupInputs(
     accessibilitySkipped = accessibilitySkipped, restrictedSettings = restrictedSettings,
     confirmed = confirmed, revisit = revisit,
     wirelessMissing = wirelessDebuggingMissing, stalledMs = stalledMs, usbAsked = usbAsked,
-    restart = helperRestart,
+    restart = helperRestart, developerSettingsMissing = developerSettingsMissing,
 )
 
 /**
@@ -79,6 +82,10 @@ object DiagnosticsCollector {
                 wifiConnected = wifi(app),
                 lastError = phone.shellManager.engine.lastError,
                 appCopies = appCopies(app, phone),
+                adbKey = adbKey(app),
+                appsAfterTask = com.wangzan101.mika.task.AppsAfterTaskEnd.lastLine,
+                helperLaunchStage = phone.shellManager.lastHelperLaunchStage,
+                helperHandoffRejection = phone.hub.lastHandoffRejection,
             ),
             recovery = DiagnosticsSnapshot.Recovery(
                 consent = phone.recoverySettings.consent.value,
@@ -95,6 +102,7 @@ object DiagnosticsCollector {
             update = app.updates.state.value.let { u ->
                 DiagnosticsSnapshot.Update(u.status.name, u.latest?.version, u.update?.version)
             },
+            speech = speech(app),
         )
     }
 
@@ -126,6 +134,12 @@ object DiagnosticsCollector {
     private fun channel(context: Context, id: String): Int? =
         runCatching { context.getSystemService(NotificationManager::class.java).getNotificationChannel(id)?.importance }.getOrNull()
 
+    /** 只看状况,不为了诊断去读钥匙。 */
+    private fun adbKey(context: Context): String? = runCatching {
+        val src = AndroidAdb.identities(context)
+        src.state.name + (src.problem?.let { " ($it)" } ?: "")
+    }.getOrNull()
+
     private fun wifi(context: Context): Boolean? = runCatching {
         val cm = context.getSystemService(ConnectivityManager::class.java)
         @Suppress("DEPRECATION")
@@ -146,6 +160,29 @@ object DiagnosticsCollector {
             accountLastFailure = app.chatGptSignIn.lastAccountFailure,
         )
     }
+
+    /** 语音转文字:选择、手机自带识别的能力和记号、手机上登记的识别服务(组件名、开不开放、要的权限)。 */
+    private fun speech(app: MikaApp): DiagnosticsSnapshot.Speech? = runCatching {
+        val settings = app.speech
+        val cap = SystemSpeech.capability(app, settings.systemSilent.value)
+        val choice = when (val c = settings.choice.value) {
+            SpeechChoice.Auto -> "auto"
+            SpeechChoice.System -> "system"
+            SpeechChoice.Off -> "off"
+            is SpeechChoice.Doubao -> "doubao-asr-2.0 / ${c.resourceId}"
+            is SpeechChoice.Provider -> c.model + (app.providers.providers.value.firstOrNull { it.id == c.providerId }?.let { " @ ${Diagnostics.host(it.baseUrl)}" } ?: " (provider removed)")
+        }
+        DiagnosticsSnapshot.Speech(
+            choice = choice,
+            systemAvailable = cap.available,
+            onDevice = cap.onDevice,
+            silent = settings.systemSilent.value,
+            remembered = settings.systemService,
+            services = SystemSpeech.services(app).map { svc ->
+                svc.component + (if (svc.open) "" else " (not exported)") + (svc.permission?.let { " needs $it" } ?: "")
+            },
+        )
+    }.getOrNull()
 
     /** 最近几次运行:结局和步数取小结,模型取概要;目标、回答、失败原话都不取。 */
     private fun runs(app: MikaApp): List<DiagnosticsSnapshot.Run> = runCatching {

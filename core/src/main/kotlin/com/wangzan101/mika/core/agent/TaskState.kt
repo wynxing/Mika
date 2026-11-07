@@ -9,9 +9,24 @@ sealed interface RunProgress {
     data class Replay(val step: Int, val total: Int) : RunProgress
     /** 一次执行模型给的 [steps] 步(do_steps)。 */
     data class Batch(val steps: Int) : RunProgress
+    /** 主模型随工作回报的任务数量/边界进度;[name] 与 [boundary] 已按用户语言书写。 */
+    data class Task(val name: String, val done: Int?, val total: Int?, val boundary: String?) : RunProgress {
+        val display: String get() = listOfNotNull(
+            name.ifBlank { null },
+            done?.let { d -> total?.let { "$d/$it" } ?: d.toString() },
+            boundary?.ifBlank { null },
+        ).joinToString(" · ")
+    }
+    /**
+     * 另一个任务正用着 [app](界面上的名字),这一步停下来等它放开(打开 App 时模型要了等)。
+     * 只是在等别的任务,不要用户做什么:界面上照样算在干活,不算「要你处理」。
+     */
+    data class WaitingForApp(val app: String) : RunProgress
 }
 
 sealed interface TaskState {
+    /** 收尾了的几种:回答了、失败了、取消了。 */
+    sealed interface Terminal : TaskState
     /** 还没开始运行。 */
     data object Idle : TaskState
     /**
@@ -51,13 +66,13 @@ sealed interface TaskState {
         val answer: String, val verified: Boolean = true, val note: String? = null,
         val sources: List<AnswerSource> = emptyList(), val unconfirmed: List<String> = emptyList(),
         val reviewed: Boolean = true,
-    ) : TaskState {
+    ) : Terminal {
         /** 核对过却没能核实(界面标出、评测记成 unverified)。 */
         val doubtful: Boolean get() = reviewed && !verified
     }
     /** [kind] 由产生失败的代码自己给出,不从 [reason] 文字里猜。 */
-    data class Failed(val reason: String, val kind: FailKind) : TaskState
-    data object Cancelled : TaskState
+    data class Failed(val reason: String, val kind: FailKind) : Terminal
+    data object Cancelled : Terminal
 }
 
 /**
@@ -65,7 +80,17 @@ sealed interface TaskState {
  * [why] 是给用户看的说明(可为空),[resumable] 为 true 时用户可以点「继续」,否则条件满足后自动继续。
  * [needsYou] 为 true 时要用户在手机上动一下手才能接着做(界面上算「要你处理」,不只是等条件)。
  */
-data class GateReason(val code: String, val why: String = "", val resumable: Boolean = false, val needsYou: Boolean = false)
+data class GateReason(val code: String, val why: String = "", val resumable: Boolean = false, val needsYou: Boolean = false) {
+    /** 还没开始、排在开始队列里(并行已满、同一对话已有任务):轮到时自动开始,点「继续」不能让它插队。 */
+    val queued: Boolean get() = code == QUEUED
+
+    companion object {
+        const val QUEUED = "queued"
+
+        /** 排队等开始;[why] 是给用户看的那句(比如前面还有几个任务)。 */
+        fun queued(why: String) = GateReason(QUEUED, why)
+    }
+}
 
 /** 任务失败的来源。 */
 enum class FailKind {
@@ -78,5 +103,10 @@ enum class FailKind {
     StepLimit,
     /** 运行环境不满足或出错(手机操作助手、无障碍、没配模型、虚拟屏断开等)。 */
     Environment,
+    /**
+     * 已受理,执行它的任务服务或进程中途没了(被系统停掉、进程被杀)。
+     * 打分和运行环境出错一样不算 Agent 的错;学东西、技能试用都不当成做不成(只有 [GaveUp]、[StepLimit] 算)。
+     */
+    Interrupted,
 }
 

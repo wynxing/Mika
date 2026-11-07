@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="model_context_title">Context and compaction</string>
+    <string name="model_context_note">Blank fields use automatic values. Settings apply on the next task to all roles using this provider and model.</string>
+    <string name="model_context_window">Context window (tokens)</string>
+    <string name="model_context_trigger">Compaction trigger (tokens)</string>
+    <string name="model_context_read_timeout">Read timeout (seconds)</string>
+    <string name="model_context_auto">Auto · %1$d</string>
+    <string name="model_context_integer">Enter a positive whole number.</string>
+    <string name="model_context_range">Allowed range (tokens) · %1$d–%2$d</string>
+    <string name="model_context_effective">Effective budget (tokens) · Window %1$d · Trigger %2$d</string>
+    <string name="model_context_save_failed">Could not save these settings. Reopen the model and try again.</string>
     <string name="models_lead">Pick which model does each job under “Roles”; models come from the providers connected below.</string>
     <string name="models_roles">Roles</string>
     <string name="models_providers">Providers</string>
@@ -34,9 +44,15 @@
     <string name="models_models">Models</string>
     <string name="models_models_note">Tap a model to use it as the main, vision or light model.</string>
     <string name="models_no_list_note">This provider has no model list. To use one of its models, enter the name from its docs under “Roles”.</string>
+    <string name="models_untested_note">This provider was saved without a test, so nothing is known about whether it works. Pick a model to test it, or tap Refresh to list its models.</string>
     <string name="models_not_listed">This provider’s models haven’t been listed yet.</string>
     <string name="refresh">Refresh</string>
     <string name="models_in_use">In use</string>
+    <string name="models_sees_images">Can see images</string>
+    <string name="models_sees_note_user">Set by you. When the main model can see, screenshots go straight to it.</string>
+    <string name="models_sees_note_vision">Used as the vision model, so it counts as able to see images.</string>
+    <string name="models_sees_note_listed">As the provider’s model list says. You can change it.</string>
+    <string name="models_sees_note_unconfirmed">Unconfirmed: the model list doesn’t say. If it can see images, turn this on and screenshots go straight to it, without a separate vision call.</string>
     <string name="models_delete">Delete this provider</string>
     <string name="role_main">Main model</string>
     <string name="role_vision">Vision model</string>
@@ -159,7 +175,7 @@
     <!-- Settings > Models: speech-to-text usage and its picker page -->
     <string name="role_speech">Speech to text</string>
     <string name="role_speech_what">Used while you hold to talk</string>
-    <string name="speech_hint">The phone’s built-in recognition is free and shows words as you speak. If the phone has none, or it mishears you, pick a provider’s model instead: it transcribes after you finish, using your quota.</string>
+    <string name="speech_hint">Choose the phone’s built-in recognition, a live speech service, or a provider model that transcribes after you finish. Online services use your provider quota.</string>
     <string name="speech_system">Built into the phone</string>
     <string name="speech_system_offline">Works offline</string>
     <string name="speech_system_online">Needs internet</string>

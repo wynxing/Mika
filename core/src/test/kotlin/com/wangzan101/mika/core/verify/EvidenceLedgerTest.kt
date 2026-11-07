@@ -114,8 +114,6 @@ class EvidenceLedgerTest {
             val forEval = RunFacts.evidence(events, RECORDED_TOOLS, goal, a)
             assertEquals(a, ok, Grounding.check(goal, a, forVerifier).found == true)
             assertEquals(a, ok, Checks.grounded(a, forEval, 2, goal))
-            // 旧窗口(最近 3 屏、3 次读网页)看不到词条页
-            assertFalse(RecordedVerifications.liveSources(events, v, f).any { "6300" in it })
         }
     }
 

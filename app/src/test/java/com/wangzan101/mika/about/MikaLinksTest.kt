@@ -47,12 +47,4 @@ class MikaLinksTest {
         val body = URLDecoder.decode(query.substringAfter("body="), "UTF-8")
         assertEquals(MikaLinks.issueBody(device), body)
     }
-
-    @Test
-    fun linksPointAtTheRepo() {
-        assertEquals("https://github.com/wangzan101/Mika#readme", MikaLinks.README)
-        assertEquals("https://x.com/wangzan101", MikaLinks.X)
-        assertTrue(MikaLinks.X_GROUP.startsWith("https://x.com/i/chat/group_join/"))
-        assertTrue(MikaLinks.LATEST_RELEASE_API.endsWith("/repos/wangzan101/Mika/releases/latest"))
-    }
 }

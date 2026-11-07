@@ -54,8 +54,10 @@ class CapsuleDockTest {
         assertEquals(DockSide.Left, CapsuleDocking.release(380, 500, 200, 100, area).side)
         assertEquals(20, CapsuleDocking.dockedX(DockSide.Left, area, 200))
         assertEquals(780, CapsuleDocking.dockedX(DockSide.Right, area, 200))
-        assertEquals(20, CapsuleDocking.edgeOffset(DockSide.Right, area))
-        assertEquals(20, CapsuleDocking.edgeOffset(DockSide.Left, area))
+        // 刘海在左边时两侧让开的宽度不同:左边 100,右边 20
+        val lopsided = DockArea.of(OverlayArea(2000, 1000, insetLeft = 80, insetTop = 40), margin = 30, gap = 20, room = 10)
+        assertEquals(100, CapsuleDocking.edgeOffset(DockSide.Left, lopsided))
+        assertEquals(20, CapsuleDocking.edgeOffset(DockSide.Right, lopsided))
     }
 
     @Test fun keyboardPushesTheRangeUp() {
@@ -66,6 +68,25 @@ class CapsuleDockTest {
         assertEquals(area, area.above(null, 20, 10))
         // 输入法比可摆范围还高:不越过顶
         assertEquals(area.top, area.above(10, 20, 10).bottom)
+    }
+
+    @Test fun keyboardDragSavesTheReleaseHeightInTheFullArea() {
+        val up = area.above(1200, gap = 20, room = 10)
+        val releaseY = 900
+        val dock = CapsuleDocking.release(450, releaseY, 200, 100, up, fractionArea = area)
+
+        // 松手比例按完整区域记;贴边动画结束后的 place 仍还原到松手高度,无动画直接 place 也一样
+        assertEquals((releaseY - area.top) / (area.bottom - area.top - 100).toFloat(), dock.fraction, 0.0001f)
+        assertEquals(releaseY, CapsuleDocking.y(dock.fraction, area, 100))
+        assertEquals(releaseY, CapsuleDocking.fitY(CapsuleDocking.y(dock.fraction, area, 100), up, 100))
+        // 输入法收起后仍回这个高度
+        assertEquals(releaseY, CapsuleDocking.fitY(CapsuleDocking.y(dock.fraction, area, 100), area, 100))
+
+        // 转屏仍使用同一个完整区域比例,再按新方向的输入法范围夹住
+        val landscape = DockArea.of(OverlayArea(2000, 1000, insetLeft = 80, insetTop = 40), margin = 30, gap = 20, room = 10)
+        val landscapeUp = landscape.above(600, gap = 20, room = 10)
+        val rotatedY = CapsuleDocking.y(dock.fraction, landscape, 100)
+        assertEquals(rotatedY, CapsuleDocking.fitY(rotatedY, landscapeUp, 100))
     }
 
     // ---------- 卡片 ----------

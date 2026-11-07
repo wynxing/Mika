@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="model_context_title">上下文与压缩</string>
+    <string name="model_context_note">留空使用自动值。同一服务商的同一模型在各用途间共用这份设置，下次任务生效。</string>
+    <string name="model_context_window">上下文窗口（token）</string>
+    <string name="model_context_trigger">压缩触发点（token）</string>
+    <string name="model_context_read_timeout">读超时（秒）</string>
+    <string name="model_context_auto">自动 · %1$d</string>
+    <string name="model_context_integer">请输入正整数。</string>
+    <string name="model_context_range">可填 %1$d–%2$d 个 token</string>
+    <string name="model_context_effective">生效窗口 %1$d · 触发点 %2$d 个 token</string>
+    <string name="model_context_save_failed">未能保存设置，请重新打开模型再试。</string>
     <string name="models_lead">每件事用哪个模型，在「用途」里选；模型来自下面连好的服务商。</string>
     <string name="models_roles">用途</string>
     <string name="models_providers">服务商</string>
@@ -34,9 +44,15 @@
     <string name="models_models">模型</string>
     <string name="models_models_note">点一个模型，可以把它用作主模型、看图或轻量模型。</string>
     <string name="models_no_list_note">这家不提供模型列表。要用它的模型，在「用途」里照文档填模型名。</string>
+    <string name="models_untested_note">这家是跳过测试存下的，还不知道能不能用。选一个模型时会先试调用，也可以点右上角刷新列出它的模型。</string>
     <string name="models_not_listed">还没列出这家的模型。</string>
     <string name="refresh">刷新</string>
     <string name="models_in_use">正在用这个</string>
+    <string name="models_sees_images">能看图</string>
+    <string name="models_sees_note_user">按你的设定。主模型能看图时，截图直接给它看。</string>
+    <string name="models_sees_note_vision">已用作看图模型，算能看图。</string>
+    <string name="models_sees_note_listed">服务商的模型列表写明的，可以改。</string>
+    <string name="models_sees_note_unconfirmed">未确认：模型列表没写。它能看图就打开，截图直接给它看，不必另调一次看图。</string>
     <string name="models_delete">删除这个服务商</string>
     <string name="role_main">主模型</string>
     <string name="role_vision">看图模型</string>
@@ -156,7 +172,7 @@
     <!-- 设置 › 模型:语音转文字这个用途和它的选择页 -->
     <string name="role_speech">语音转文字</string>
     <string name="role_speech_what">按住说话时用</string>
-    <string name="speech_hint">手机自带的不花钱、边说边出字。手机没有，或者认得不准时，选一个服务商的模型：说完再转，用你的额度。</string>
+    <string name="speech_hint">可使用手机自带识别、边说边转的语音服务，或说完再转的服务商模型；在线服务使用你的服务商额度。</string>
     <string name="speech_system">手机自带</string>
     <string name="speech_system_offline">可离线</string>
     <string name="speech_system_online">需联网</string>

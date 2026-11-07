@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="appaccess_title">App access</string>
+    <string name="appaccess_row_sub">Block apps and screen sharing per app</string>
+    <string name="appaccess_intro">Choose which apps Mika may read and operate with standard phone tools. Shell commands, the sandbox and computer access (MCP) are not restricted by this setting.</string>
+    <string name="appaccess_privacy">Categorizing sends app names and package names to the AI model; “Refresh app list” asks you first.</string>
+    <string name="appaccess_unavailable">App access settings can’t be read, so standard phone access is paused. Resetting clears the saved permissions and categories.</string>
+    <string name="appaccess_reset">Reset app access</string>
+    <string name="appaccess_search">Search name or package</string>
+    <string name="appaccess_refreshing">Categorizing…</string>
+    <string name="appaccess_refresh">Refresh app list</string>
+    <string name="appaccess_recommend">Recommended to block</string>
+    <string name="appaccess_recommend_count">Recommended to block · %1$d</string>
+    <string name="appaccess_allow_all">Allow all</string>
+    <string name="appaccess_risk_note">Automatic operation can bring account limits for these; block the ones you don’t need.</string>
+    <string name="appaccess_blocked">Blocked</string>
+    <string name="appaccess_allowed">Allowed</string>
+    <string name="appaccess_revoke_share">Revoke screen sharing for %1$s</string>
+
+    <string name="appaccess_send_title">Send the app list to the AI?</string>
+    <string name="appaccess_send_body">Refreshing reads your installed apps and sends their names and package names to the AI model you configured, to judge a risk category. Nothing inside the apps is sent.</string>
+    <string name="appaccess_send_confirm">Continue and categorize</string>
+    <string name="appaccess_cancel">Cancel</string>
+
+    <string name="appaccess_recommend_title">Recommended to block: finance apps</string>
+    <string name="appaccess_recommend_body">These apps are classified as finance or payments, and Mika can still operate them. Block them one by one, or all at once.</string>
+    <string name="appaccess_recommend_empty">Nothing to block.</string>
+    <string name="appaccess_block">Block</string>
+    <string name="appaccess_block_all">Block all</string>
+
+    <string name="appaccess_edit_category">Change category</string>
+    <string name="appaccess_category_manual">Set by you</string>
+
+    <string name="appaccess_error_save">Couldn’t save</string>
+    <string name="appaccess_error_no_model">No model is available. The app list was refreshed but can’t be categorized.</string>
+    <string name="appaccess_error_refresh">Refresh failed</string>
+    <string name="appaccess_error_load">Couldn’t read the app list</string>
+
+    <string name="appaccess_category_finance">Finance</string>
+    <string name="appaccess_category_social">Social</string>
+    <string name="appaccess_category_game">Games</string>
+    <string name="appaccess_category_shopping">Shopping</string>
+    <string name="appaccess_category_productivity">Productivity</string>
+    <string name="appaccess_category_media">Media</string>
+    <string name="appaccess_category_other">Other</string>
+    <string name="appaccess_category_unknown">Uncategorized</string>
+
+    <string name="appaccess_share_title">Share the screen of %1$s</string>
+    <string name="appaccess_share_body">This app is blocked. Screen sharing lets you share it on purpose; automatic reading and operation stay blocked.</string>
+    <string name="appaccess_share_allow">Allow screen sharing only</string>
+    <string name="appaccess_share_unblock">Remove from blocked</string>
+    <string name="appaccess_share_cancel">Cancel sharing</string>
+    <string name="appaccess_share_expired">Screen sharing permission expired. Take a new screenshot.</string>
+</resources>

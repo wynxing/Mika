@@ -38,6 +38,10 @@ class HelperHub(context: Context) {
     /** 助手交接时报来的「Mika 被杀后由它拉起来」的记录(诊断信息用);没拉过为 null。 */
     val restores: StateFlow<HelperRestoreReport?> = _restores.asStateFlow()
 
+    /** 最近一次交接拒绝的固定枚举;不含口令、Binder、包路径或调用方数据。 */
+    @Volatile var lastHandoffRejection: String? = null
+        private set
+
     /** 经助手代连本进程的 WebView 调试套接字;助手不在时抛 IOException,助手拒绝或连不上为 null。 */
     fun openDevtoolsSocket(endpoint: String): ParcelFileDescriptor? {
         val sh = shell.value ?: throw IOException("phone helper is not running")
@@ -53,6 +57,9 @@ class HelperHub(context: Context) {
 
     /** 写进「用电脑启动」脚本的一次性口令(见 [HandoffNonces.usbNonce]);交接走的是同一个 [offer]。 */
     fun usbNonce(): String = nonces.usbNonce()
+
+    /** 口令被整体作废的次数(见 [HandoffNonces.resets]):「用电脑启动」脚本跟着它重写。 */
+    val nonceResets: StateFlow<Int> get() = nonces.resets
 
     /** 解除配对:口令全部作废(还活着的助手下次交接会被拒绝并退出),手里的接口也放掉。 */
     fun forget() {
@@ -106,6 +113,7 @@ class HelperHub(context: Context) {
     }
 
     private fun reject(why: HelperHandoff.Reject): Bundle {
+        lastHandoffRejection = why.name
         Log.w(TAG, "helper handoff rejected: $why")
         return Bundle().apply {
             putBoolean(HelperHandoff.KEY_ACCEPTED, false)

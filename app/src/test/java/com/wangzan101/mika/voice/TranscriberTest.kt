@@ -99,8 +99,17 @@ class TranscriberTest {
         val m = t.detect(provider(ProviderConfig.Kind.OpenAiCompat, "/v1"), "k", "m")
         assertEquals(TranscribeMethod.ChatInputAudioOnly, m)
         assertEquals(4, server.requestCount)
-        repeat(3) { assertTrue(server.takeRequest().body.readUtf8().let { it.isEmpty() || it.contains("\"type\":\"text\"") || it.contains("name=\"model\"") }) }
-        assertFalse(server.takeRequest().body.readUtf8().contains("\"type\":\"text\""))
+        // 依次试过:转写接口(multipart)、对话接口带音频、对话接口带 data URI
+        val first = server.takeRequest().body.readUtf8()
+        assertTrue(first, "name=\"model\"" in first)
+        val second = server.takeRequest().body.readUtf8()
+        assertTrue(second, "\"input_audio\"" in second && "data:audio" !in second)
+        val third = server.takeRequest().body.readUtf8()
+        assertTrue(third, "data:audio/wav;base64," in third)
+        // 最后一种:只发音频、不带指令
+        val last = server.takeRequest().body.readUtf8()
+        assertFalse(last, "\"type\":\"text\"" in last)
+        assertTrue(last, "\"input_audio\"" in last)
     }
 
     @Test
@@ -108,6 +117,7 @@ class TranscriberTest {
         server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"content":"x"}}]}"""))
         t.transcribe(provider(ProviderConfig.Kind.OpenAiCompat, "/v1"), "k", "m", TranscribeMethod.ChatInputAudio, wav, null)
         val body = server.takeRequest().body.readUtf8()
+        assertTrue(body, "\"input_audio\"" in body)
         assertFalse(body, body.contains("data:audio"))
     }
 

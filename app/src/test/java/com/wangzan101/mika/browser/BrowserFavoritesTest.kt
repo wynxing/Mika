@@ -65,9 +65,10 @@ class BrowserFavoritesTest {
         val sites = SiteRegistry(tmp.newFolder("reg"))
         sites.markLoggedIn("shop.example.com")
         val f = BrowserFavorites(tmp.root)
+        val before = sites.list()
         f.remove("shop.example.com")
         assertTrue(BrowserFavorites.combine(f.edits.value, sites.list()).isEmpty())
-        assertEquals(listOf(SiteEntry("shop.example.com", sites.list()[0].lastVisitMs, true)), sites.list())
+        assertEquals(before, sites.list())
         assertTrue(BrowserFavorites.loggedIn(sites.list(), "example.com"))
     }
 

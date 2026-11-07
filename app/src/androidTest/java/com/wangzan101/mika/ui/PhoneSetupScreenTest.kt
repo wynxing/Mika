@@ -70,6 +70,18 @@ class PhoneSetupScreenTest {
         assertEquals(listOf("port 41235", "close"), calls)
     }
 
+    /** 这个环境没有开发者选项和无线调试:一开始就说明,不列步骤,「知道了」离开。 */
+    @Test
+    fun unavailableEnvironmentExplainsUpFrontWithoutSteps() {
+        show(SetupInputs(false, false, BuiltinShellStatus.NotPaired, wirelessMissing = true, developerSettingsMissing = true))
+        compose.onNodeWithTag("setup-unavailable").assertIsDisplayed()
+        compose.onNodeWithText(PhoneSetupCopy.UNAVAILABLE).assertIsDisplayed()
+        compose.onNodeWithText(PhoneSetupCopy.step(SetupStep.DeveloperOptions).title).assertDoesNotExist()
+        compose.onNodeWithTag("setup-later").assertDoesNotExist()
+        compose.onNodeWithTag("setup-got-it").performClick()
+        assertEquals(listOf("close"), calls)
+    }
+
     /** 正在连接:也能「稍后再说」;在本机找端口时照实说。 */
     @Test
     fun workingOffersLaterAndShowsPortSearch() {
@@ -290,15 +302,5 @@ class PhoneSetupScreenTest {
         }
         compose.onNodeWithTag("setup-usb").assertDoesNotExist()
         compose.onNodeWithTag("setup-usb-ask").assertDoesNotExist()
-    }
-
-    @Test
-    fun unpairNeedsConfirmation() {
-        compose.setContent { PhoneHelperSection(BuiltinShellStatus.Running, onRepair = { calls += "repair" }, onUnpair = { calls += "unpair" }) }
-        compose.onNodeWithText(PhoneSetupCopy.REPAIR).performClick()
-        compose.onNodeWithText(PhoneSetupCopy.UNPAIR).performClick()
-        compose.onNodeWithText(PhoneSetupCopy.UNPAIR_TITLE).assertIsDisplayed()
-        compose.onNodeWithText(PhoneSetupCopy.UNPAIR_CONFIRM).performClick()
-        assertEquals(listOf("repair", "unpair"), calls)
     }
 }

@@ -24,7 +24,7 @@ object Redactor {
     /** [secretField]:端口报告这次输入的目标是密码框。 */
     /** [verb]:调用的工具做的动作(不认识的工具为 null)。 */
     fun args(verb: Verb?, argsJson: String, secretField: Boolean): String {
-        if (verb == Verb.MemorySave) return maskFields(argsJson, MEMORY_ARGS)
+        if (verb == Verb.MemorySave || verb == Verb.MemoryEdit) return maskFields(argsJson, MEMORY_ARGS)
         if (verb == Verb.Script) return script(argsJson)
         if (verb == Verb.PhoneCommand) return maskFields(argsJson, setOf("command"))
         if (verb == Verb.PhoneRun) return phoneRun(argsJson)
@@ -155,7 +155,7 @@ object Redactor {
     private val WORD_SPLIT = Regex("[^A-Za-z0-9]+")
 
     /** 名字按词拆开(驼峰、下划线、连字符)后有像凭据的词。 */
-    private fun secretName(name: String): Boolean {
+    internal fun secretName(name: String): Boolean {
         val words = name.split(WORD_SPLIT).flatMap { it.split(CASE_BOUNDARY) }.map { it.lowercase() }.filter { it.isNotEmpty() }
         return words.any { it in SECRET_WORDS } || words.joinToString("") in SECRET_COMPOUNDS
     }
