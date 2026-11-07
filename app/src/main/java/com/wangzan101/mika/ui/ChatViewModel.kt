@@ -396,6 +396,9 @@ class ChatViewModel(
     private val sharedDraftUri: (String) -> String = { it },
     /** 读写对话记录、复制分支在哪儿做。 */
     private val io: CoroutineContext = Dispatchers.IO,
+    /** 正在跟用户学习时不另开任务，也不把这句话记成已经开始。 */
+    private val teaching: () -> Boolean = { false },
+    private val onTeachingBlocked: () -> Unit = {},
 ) {
     /** 用户在对话页上关掉留在后台的那一页。 */
     fun closeKeptPage() = closeKept()
@@ -716,6 +719,10 @@ class ChatViewModel(
 
     /** 发送输入框里的话;有引用时引用写在话的前面(见 [QuoteMessage]),发出去后清掉。返回 false 表示没发出去(条件不满足,或任务在跑)。 */
     fun send(text: String, check: Prerequisites.Check): Boolean {
+        if (teaching()) {
+            onTeachingBlocked()
+            return false
+        }
         refreshParallel()
         val ui = _ui.value
         if (ui.importing) return false

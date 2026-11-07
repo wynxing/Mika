@@ -273,6 +273,7 @@
             </intent-filter>
         </receiver>
         <receiver android:name=".task.TriggerAlarmReceiver" android:exported="false" />
+        <receiver android:name=".teach.TeachReceiver" android:exported="false" />
     </application>
 
 </manifest>
